@@ -48,6 +48,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
+    AllowedToken(Address),
 }
 
 #[contracterror]
@@ -66,6 +67,7 @@ pub enum ChannelError {
     NotClosing = 10,
     Held = 11,
     ZeroDeposit = 12,
+    TokenNotAllowed = 13,
 }
 
 #[contract]
@@ -103,6 +105,10 @@ impl ChannelContract {
         Ok(())
     }
 
+    fn is_token_allowed(env: &Env, token: &Address) -> bool {
+        env.storage().persistent().get(&DataKey::AllowedToken(token.clone())).unwrap_or(false)
+    }
+
     fn get_channel(env: &Env, id: u64) -> Result<Channel, ChannelError> {
         env.storage()
             .persistent()
@@ -138,6 +144,9 @@ impl ChannelContract {
         Self::require_not_paused(&env)?;
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
+        }
+        if !Self::is_token_allowed(&env, &token) {
+            return Err(ChannelError::TokenNotAllowed);
         }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
@@ -288,6 +297,15 @@ impl ChannelContract {
 
     pub fn get_channel_info(env: Env, channel_id: u64) -> Result<Channel, ChannelError> {
         Self::get_channel(&env, channel_id)
+    }
+
+    /// Admin-gated allowlist of token contracts that open_channel accepts.
+    /// Default-deny: a token is unusable until explicitly allowed here.
+    pub fn set_token_allowed(env: Env, token: Address, allowed: bool) -> Result<(), ChannelError> {
+        Self::require_admin(&env)?;
+        env.storage().persistent().set(&DataKey::AllowedToken(token.clone()), &allowed);
+        env.events().publish((symbol_short!("tokenok"),), (token, allowed));
+        Ok(())
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
