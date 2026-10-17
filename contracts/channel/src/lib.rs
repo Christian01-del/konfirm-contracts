@@ -626,4 +626,78 @@ mod test {
         assert_eq!(token_client.balance(&contract_id), 700_0000i128);
         assert_eq!(token_client.balance(&payer), 1_000_0000i128 - 700_0000i128);
     }
+
+    #[test]
+    fn release_hold_restores_open_and_resumes_checkpoint_and_top_up() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+
+        client.hold_channel(&id);
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Held);
+        assert_eq!(
+            client.try_top_up(&payer, &id, &100_0000i128),
+            Err(Ok(ChannelError::NotOpen))
+        );
+
+        client.release_hold(&id);
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+
+        client.top_up(&payer, &id, &100_0000i128);
+        assert_eq!(client.get_channel_info(&id).deposited, 600_0000i128);
+
+        let cumulative_amount: i128 = 100_0000;
+        let nonce: u64 = 1;
+        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
+        client.checkpoint(&id, &cumulative_amount, &nonce, &signature);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.claimed, cumulative_amount);
+        assert_eq!(token::TokenClient::new(&env, &token_id).balance(&payee), cumulative_amount);
+    }
+
+    #[test]
+    fn release_hold_rejects_non_held_channel() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+
+        // Open channel: nothing to release.
+        assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+
+        // Closing channel: also not Held.
+        client.initiate_close(&payer, &id);
+        assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Closing);
+    }
 }
