@@ -46,6 +46,7 @@ pub enum TreasuryError {
     ThresholdNotMet = 9,
     NotPending = 10,
     InvalidThreshold = 11,
+    DuplicateSigner = 12,
 }
 
 #[contract]
@@ -65,6 +66,11 @@ impl TreasuryContract {
         }
         if threshold == 0 || threshold > signers.len() {
             return Err(TreasuryError::InvalidThreshold);
+        }
+        for (i, signer) in signers.iter().enumerate() {
+            if signers.iter().skip(i + 1).any(|other| other == signer) {
+                return Err(TreasuryError::DuplicateSigner);
+            }
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
