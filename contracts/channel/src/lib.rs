@@ -118,8 +118,20 @@ impl ChannelContract {
     /// The message a payer signs off-chain to authorize a cumulative amount.
     /// Fixed-width, domain-tagged encoding — never string concatenation,
     /// which is how signatures end up ambiguous across field boundaries.
-    fn claim_payload(env: &Env, channel_id: u64, nonce: u64, cumulative_amount: i128) -> Bytes {
+    /// The contract's own address (a 56-char strkey) binds the signature to
+    /// this deployment: contract IDs derive from the network, deployer and
+    /// salt, so identical code deployed elsewhere yields a different ID.
+    fn claim_payload(
+        env: &Env,
+        contract: &Address,
+        channel_id: u64,
+        nonce: u64,
+        cumulative_amount: i128,
+    ) -> Bytes {
+        let mut contract_strkey = [0u8; 56];
+        contract.to_string().copy_into_slice(&mut contract_strkey);
         let mut payload = Bytes::from_array(env, DOMAIN_TAG);
+        payload.append(&Bytes::from_array(env, &contract_strkey));
         payload.append(&Bytes::from_array(env, &channel_id.to_be_bytes()));
         payload.append(&Bytes::from_array(env, &nonce.to_be_bytes()));
         payload.append(&Bytes::from_array(env, &cumulative_amount.to_be_bytes()));
@@ -203,7 +215,13 @@ impl ChannelContract {
             return Err(ChannelError::ExceedsDeposit);
         }
 
-        let payload = Self::claim_payload(&env, channel_id, nonce, cumulative_amount);
+        let payload = Self::claim_payload(
+            &env,
+            &env.current_contract_address(),
+            channel_id,
+            nonce,
+            cumulative_amount,
+        );
         // Traps the whole invocation on a bad signature rather than returning
         // an error value — a real property of the host function, not a choice
         // this contract makes.
@@ -315,13 +333,13 @@ mod test {
         sac.address()
     }
 
-    // claim_payload's exact length: 15-byte domain tag + 8-byte channel_id
-    // + 8-byte nonce + 16-byte cumulative_amount. Bytes::to_alloc_vec()
-    // would be simpler but needs soroban-sdk's `alloc` feature, which isn't
-    // enabled here — copy_into_slice into a fixed buffer needs no new
-    // feature and the length is fixed anyway.
-    fn payload_bytes(payload: &Bytes) -> [u8; 47] {
-        let mut buf = [0u8; 47];
+    // claim_payload's exact length: 15-byte domain tag + 56-byte contract
+    // strkey + 8-byte channel_id + 8-byte nonce + 16-byte cumulative_amount.
+    // Bytes::to_alloc_vec() would be simpler but needs soroban-sdk's `alloc`
+    // feature, which isn't enabled here — copy_into_slice into a fixed buffer
+    // needs no new feature and the length is fixed anyway.
+    fn payload_bytes(payload: &Bytes) -> [u8; 103] {
+        let mut buf = [0u8; 103];
         payload.copy_into_slice(&mut buf);
         buf
     }
@@ -491,7 +509,7 @@ mod test {
         // reimplemented — a test that built its own byte layout could pass
         // for the wrong reason if it silently drifted from what
         // checkpoint() actually verifies.
-        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, cumulative_amount);
         let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
 
         client.checkpoint(&id, &cumulative_amount, &nonce, &signature);
@@ -532,7 +550,7 @@ mod test {
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
 
         let sign_claim = |nonce: u64, amount: i128| -> BytesN<64> {
-            let payload = ChannelContract::claim_payload(&env, id, nonce, amount);
+            let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, amount);
             BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes())
         };
 
@@ -591,7 +609,7 @@ mod test {
         // signature is genuine.
         let cumulative_amount: i128 = 600_0000;
         let nonce: u64 = 1;
-        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, cumulative_amount);
         let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
 
         let res = client.try_checkpoint(&id, &cumulative_amount, &nonce, &signature);
