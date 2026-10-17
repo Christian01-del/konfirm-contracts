@@ -290,6 +290,32 @@ impl ChannelContract {
         Self::get_channel(&env, channel_id)
     }
 
+    /// Rotates the admin key. Requires auth from both the current admin and
+    /// the incoming one, so a handoff can't strand the contract on an address
+    /// nobody holds. Deliberately not pause-gated: rotating away from a
+    /// suspected key must still work during an incident. Has no effect on
+    /// checkpoint(), which is permissionless and never admin-gated.
+    ///
+    /// This does NOT defend against a leaked current key on its own — that key
+    /// can still rotate to an attacker-held address. Quorum-based control
+    /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
+    /// that gap; see docs/KEYS.md.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ChannelError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ChannelError::NotInitialized)?;
+        if current_admin != admin {
+            return Err(ChannelError::Unauthorized);
+        }
+        current_admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish((symbol_short!("admin"),), new_admin);
+        Ok(())
+    }
+
     pub fn pause(env: Env) -> Result<(), ChannelError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
