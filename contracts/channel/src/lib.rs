@@ -181,7 +181,7 @@ impl ChannelContract {
         Ok(())
     }
 
-    /// Never pausable. See module docs.
+    /// Permissionless — authorized by the payer's signature, not an address. Never pausable. See module docs.
     pub fn checkpoint(
         env: Env,
         channel_id: u64,
@@ -286,6 +286,7 @@ impl ChannelContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn get_channel_info(env: Env, channel_id: u64) -> Result<Channel, ChannelError> {
         Self::get_channel(&env, channel_id)
     }

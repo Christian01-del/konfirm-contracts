@@ -59,7 +59,7 @@ impl ComplianceContract {
         Ok(())
     }
 
-    /// Read-only, and deliberately callable even while paused — pausing the
+    /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {

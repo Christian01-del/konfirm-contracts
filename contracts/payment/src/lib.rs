@@ -123,6 +123,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn get_payment(env: Env, payment_id: u64) -> Result<PaymentRecord, PaymentError> {
         env.storage()
             .persistent()

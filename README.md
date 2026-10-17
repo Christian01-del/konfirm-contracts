@@ -122,6 +122,15 @@ Each contract's `initialize` takes its own arguments: `compliance` and `payment`
 
 Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
 
+## Authorization convention
+
+Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
+
+- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
+- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
+
+If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
+
 ## Project structure
 
 ```

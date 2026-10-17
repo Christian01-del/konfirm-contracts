@@ -154,6 +154,8 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Permissionless — once the threshold is met, anyone may execute. Funds only
+    /// ever move to `settlement.merchant`, so the caller cannot redirect them.
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
         Self::require_not_paused(&env)?;
         let threshold: u32 = env
@@ -195,6 +197,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
