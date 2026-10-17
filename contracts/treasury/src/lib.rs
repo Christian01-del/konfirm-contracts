@@ -154,7 +154,8 @@ impl TreasuryContract {
         Ok(())
     }
 
-    pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
+    pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
+        Self::require_signer(&env, &caller)?;
         Self::require_not_paused(&env)?;
         let threshold: u32 = env
             .storage()
@@ -252,7 +253,7 @@ mod test {
         let merchant = Address::generate(&env);
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
-        let res = client.try_execute_settlement(&id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert_eq!(res, Err(Ok(TreasuryError::ThresholdNotMet)));
     }
 
@@ -265,7 +266,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
         let settlement = client.get_settlement(&id);
         assert_eq!(settlement.status, SettlementStatus::Executed);
     }
@@ -304,8 +305,8 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
-        let res = client.try_execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert_eq!(res, Err(Ok(TreasuryError::NotPending)));
     }
 
@@ -336,7 +337,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
 
         // The actual gap this whole fix closes: before it, execute_settlement
         // only flipped a status flag and neither balance below would have
@@ -370,7 +371,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        let res = client.try_execute_settlement(&id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert!(res.is_err(), "an underfunded transfer should trap, not silently succeed");
 
         let settlement = client.get_settlement(&id);
