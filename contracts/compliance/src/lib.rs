@@ -7,8 +7,16 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_sh
 enum DataKey {
     Admin,
     Paused,
-    Blocked(Address),
-    Allowed(Address),
+    Status(Address),
+}
+
+// An address is either blocked, explicitly cleared (audit record), or has no
+// record at all. The last state is represented by the absence of the key.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComplianceStatus {
+    Blocked,
+    Cleared,
 }
 
 #[contracterror]
@@ -63,14 +71,15 @@ impl ComplianceContract {
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {
-        !env.storage().persistent().has(&DataKey::Blocked(addr))
+        env.storage().persistent().get(&DataKey::Status(addr)) != Some(ComplianceStatus::Blocked)
     }
 
     pub fn block_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().set(&DataKey::Blocked(addr.clone()), &true);
-        env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &false);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Status(addr.clone()), &ComplianceStatus::Blocked);
         env.events().publish((symbol_short!("blocked"),), addr);
         Ok(())
     }
@@ -80,8 +89,9 @@ impl ComplianceContract {
     pub fn allow_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
-        env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Status(addr.clone()), &ComplianceStatus::Cleared);
         env.events().publish((symbol_short!("allowed"),), addr);
         Ok(())
     }
@@ -89,8 +99,7 @@ impl ComplianceContract {
     pub fn clear_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
-        env.storage().persistent().remove(&DataKey::Allowed(addr.clone()));
+        env.storage().persistent().remove(&DataKey::Status(addr.clone()));
         env.events().publish((symbol_short!("cleared"),), addr);
         Ok(())
     }
