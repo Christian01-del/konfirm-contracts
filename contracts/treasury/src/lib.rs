@@ -323,6 +323,19 @@ mod test {
     }
 
     #[test]
+    fn zero_threshold_rejected_at_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        let signers = vec![&env, Address::generate(&env)];
+        let contract_id = env.register(TreasuryContract, ());
+        let client = TreasuryContractClient::new(&env, &contract_id);
+        let res = client.try_initialize(&admin, &token, &signers, &0u32);
+        assert_eq!(res, Err(Ok(TreasuryError::InvalidThreshold)));
+    }
+
+    #[test]
     fn execute_settlement_actually_transfers_the_real_token_balance() {
         let env = Env::default();
         env.mock_all_auths();
