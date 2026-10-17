@@ -2,6 +2,9 @@
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
+const TTL_THRESHOLD: u32 = 100;
+const TTL_EXTEND_TO: u32 = 5_000_000;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SettlementStatus {
@@ -113,6 +116,7 @@ impl TreasuryContract {
         merchant: Address,
         amount: i128,
     ) -> Result<u64, TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &proposer)?;
         Self::require_not_paused(&env)?;
         if amount <= 0 {
@@ -129,11 +133,13 @@ impl TreasuryContract {
             status: SettlementStatus::Pending,
         };
         env.storage().persistent().set(&DataKey::Settlement(id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("proposed"), merchant), (id, amount));
         Ok(id)
     }
 
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &signer)?;
         Self::require_not_paused(&env)?;
 
@@ -150,11 +156,13 @@ impl TreasuryContract {
         }
         settlement.approvals.push_back(signer);
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(settlement_id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("approved"),), settlement_id);
         Ok(())
     }
 
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_not_paused(&env)?;
         let threshold: u32 = env
             .storage()
@@ -191,6 +199,7 @@ impl TreasuryContract {
 
         settlement.status = SettlementStatus::Executed;
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(settlement_id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("executed"),), settlement_id);
         Ok(())
     }
@@ -203,12 +212,14 @@ impl TreasuryContract {
     }
 
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())

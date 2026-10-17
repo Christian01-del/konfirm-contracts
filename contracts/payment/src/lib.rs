@@ -9,6 +9,9 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_sh
 // verified that transfer on Horizon — the on-chain record exists because the
 // payment already happened, never before.
 
+const TTL_THRESHOLD: u32 = 100;
+const TTL_EXTEND_TO: u32 = 5_000_000;
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaymentRecord {
@@ -84,6 +87,7 @@ impl PaymentContract {
         amount: i128,
         tx_hash: BytesN<32>,
     ) -> Result<u64, PaymentError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         if amount <= 0 {
@@ -102,11 +106,13 @@ impl PaymentContract {
             refunded: false,
         };
         env.storage().persistent().set(&DataKey::Payment(id), &record);
+        env.storage().persistent().extend_ttl(&DataKey::Payment(id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("recorded"), merchant), (id, link_id, amount));
         Ok(id)
     }
 
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         let mut record: PaymentRecord = env
@@ -119,6 +125,7 @@ impl PaymentContract {
         }
         record.refunded = true;
         env.storage().persistent().set(&DataKey::Payment(payment_id), &record);
+        env.storage().persistent().extend_ttl(&DataKey::Payment(payment_id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("refunded"),), payment_id);
         Ok(())
     }
@@ -131,12 +138,14 @@ impl PaymentContract {
     }
 
     pub fn pause(env: Env) -> Result<(), PaymentError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())

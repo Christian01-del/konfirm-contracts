@@ -16,6 +16,8 @@ use soroban_sdk::{
 // withdrawal someone can already prove is owed to them.
 
 const DOMAIN_TAG: &[u8; 15] = b"KONFIRM_CHAN_V1";
+const TTL_THRESHOLD: u32 = 100;
+const TTL_EXTEND_TO: u32 = 5_000_000;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,7 +114,7 @@ impl ChannelContract {
 
     fn save_channel(env: &Env, id: u64, ch: &Channel) {
         env.storage().persistent().set(&DataKey::Channel(id), ch);
-        env.storage().persistent().extend_ttl(&DataKey::Channel(id), 100, 5_000_000);
+        env.storage().persistent().extend_ttl(&DataKey::Channel(id), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// The message a payer signs off-chain to authorize a cumulative amount.
@@ -134,6 +136,7 @@ impl ChannelContract {
         payer_pubkey: BytesN<32>,
         deposit: i128,
     ) -> Result<u64, ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         payer.require_auth();
         Self::require_not_paused(&env)?;
         if deposit <= 0 {
@@ -162,6 +165,7 @@ impl ChannelContract {
     }
 
     pub fn top_up(env: Env, payer: Address, channel_id: u64, amount: i128) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         payer.require_auth();
         Self::require_not_paused(&env)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
@@ -189,6 +193,7 @@ impl ChannelContract {
         nonce: u64,
         signature: BytesN<64>,
     ) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.status == ChannelStatus::Held {
             return Err(ChannelError::Held);
@@ -220,6 +225,7 @@ impl ChannelContract {
     }
 
     pub fn initiate_close(env: Env, caller: Address, channel_id: u64) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         caller.require_auth();
         let mut ch = Self::get_channel(&env, channel_id)?;
         if caller != ch.payer && caller != ch.payee {
@@ -238,6 +244,7 @@ impl ChannelContract {
     /// Permissionless — anyone can trigger this once the challenge window has
     /// elapsed. Pays the unclaimed remainder back to the payer.
     pub fn finalize_close(env: Env, channel_id: u64) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.status != ChannelStatus::Closing {
             return Err(ChannelError::NotClosing);
@@ -266,6 +273,7 @@ impl ChannelContract {
     }
 
     pub fn hold_channel(env: Env, channel_id: u64) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         ch.status = ChannelStatus::Held;
@@ -275,6 +283,7 @@ impl ChannelContract {
     }
 
     pub fn release_hold(env: Env, channel_id: u64) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.status != ChannelStatus::Held {
@@ -291,12 +300,14 @@ impl ChannelContract {
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())

@@ -2,6 +2,9 @@
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
 
+const TTL_THRESHOLD: u32 = 100;
+const TTL_EXTEND_TO: u32 = 5_000_000;
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
@@ -63,14 +66,24 @@ impl ComplianceContract {
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {
-        !env.storage().persistent().has(&DataKey::Blocked(addr))
+        let key = DataKey::Blocked(addr);
+        if env.storage().persistent().has(&key) {
+            // Keeps a live block from archiving, which would silently flip the
+            // address back to "allowed" without anyone clearing it.
+            env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            return false;
+        }
+        true
     }
 
     pub fn block_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().set(&DataKey::Blocked(addr.clone()), &true);
+        env.storage().persistent().extend_ttl(&DataKey::Blocked(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &false);
+        env.storage().persistent().extend_ttl(&DataKey::Allowed(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("blocked"),), addr);
         Ok(())
     }
@@ -78,15 +91,18 @@ impl ComplianceContract {
     /// Explicitly clears a block (e.g. after manual review) and leaves an
     /// audit record distinct from an address that was simply never flagged.
     pub fn allow_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
         env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &true);
+        env.storage().persistent().extend_ttl(&DataKey::Allowed(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("allowed"),), addr);
         Ok(())
     }
 
     pub fn clear_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
@@ -96,12 +112,14 @@ impl ComplianceContract {
     }
 
     pub fn pause(env: Env) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
