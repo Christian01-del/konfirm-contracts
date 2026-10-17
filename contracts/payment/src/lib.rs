@@ -27,6 +27,7 @@ enum DataKey {
     Paused,
     NextId,
     Payment(u64),
+    Voided(u64),
 }
 
 #[contracterror]
@@ -40,6 +41,8 @@ pub enum PaymentError {
     NotFound = 5,
     ZeroAmount = 6,
     AlreadyRefunded = 7,
+    AlreadyVoided = 8,
+    Voided = 9,
 }
 
 #[contract]
@@ -117,10 +120,46 @@ impl PaymentContract {
         if record.refunded {
             return Err(PaymentError::AlreadyRefunded);
         }
+        if Self::is_voided_flag(&env, payment_id) {
+            return Err(PaymentError::Voided);
+        }
         record.refunded = true;
         env.storage().persistent().set(&DataKey::Payment(payment_id), &record);
         env.events().publish((symbol_short!("refunded"),), payment_id);
         Ok(())
+    }
+
+    // Marks a record as mis-recorded: no money moved, so nothing is reversed on
+    // the ledger. The record itself is never rewritten; the voided flag sits
+    // alongside it and consumers must check is_voided before trusting it.
+    pub fn void_payment(env: Env, payment_id: u64) -> Result<(), PaymentError> {
+        Self::require_admin(&env)?;
+        Self::require_not_paused(&env)?;
+        let record: PaymentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Payment(payment_id))
+            .ok_or(PaymentError::NotFound)?;
+        if Self::is_voided_flag(&env, payment_id) {
+            return Err(PaymentError::AlreadyVoided);
+        }
+        if record.refunded {
+            return Err(PaymentError::AlreadyRefunded);
+        }
+        env.storage().persistent().set(&DataKey::Voided(payment_id), &true);
+        env.events().publish((symbol_short!("voided"),), payment_id);
+        Ok(())
+    }
+
+    fn is_voided_flag(env: &Env, payment_id: u64) -> bool {
+        env.storage().persistent().get(&DataKey::Voided(payment_id)).unwrap_or(false)
+    }
+
+    pub fn is_voided(env: Env, payment_id: u64) -> Result<bool, PaymentError> {
+        if !env.storage().persistent().has(&DataKey::Payment(payment_id)) {
+            return Err(PaymentError::NotFound);
+        }
+        Ok(Self::is_voided_flag(&env, payment_id))
     }
 
     pub fn get_payment(env: Env, payment_id: u64) -> Result<PaymentRecord, PaymentError> {
