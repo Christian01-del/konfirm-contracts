@@ -17,6 +17,11 @@ use soroban_sdk::{
 
 const DOMAIN_TAG: &[u8; 15] = b"KONFIRM_CHAN_V1";
 
+// Cap on channels a single payer can have that aren't yet Closed. Each open
+// channel is persistent storage the operator pays to keep alive, so this
+// bounds how much any one account can make the protocol carry for free.
+const MAX_OPEN_CHANNELS_PER_PAYER: u32 = 20;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelStatus {
@@ -48,6 +53,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
+    OpenCount(Address),
 }
 
 #[contracterror]
@@ -66,6 +72,7 @@ pub enum ChannelError {
     NotClosing = 10,
     Held = 11,
     ZeroDeposit = 12,
+    TooManyOpenChannels = 13,
 }
 
 #[contract]
@@ -115,6 +122,19 @@ impl ChannelContract {
         env.storage().persistent().extend_ttl(&DataKey::Channel(id), 100, 5_000_000);
     }
 
+    fn save_open_count(env: &Env, payer: &Address, count: u32) {
+        let key = DataKey::OpenCount(payer.clone());
+        env.storage().persistent().set(&key, &count);
+        env.storage().persistent().extend_ttl(&key, 100, 5_000_000);
+    }
+
+    fn get_open_count(env: &Env, payer: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OpenCount(payer.clone()))
+            .unwrap_or(0)
+    }
+
     /// The message a payer signs off-chain to authorize a cumulative amount.
     /// Fixed-width, domain-tagged encoding — never string concatenation,
     /// which is how signatures end up ambiguous across field boundaries.
@@ -139,6 +159,10 @@ impl ChannelContract {
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
         }
+        let open_count = Self::get_open_count(&env, &payer);
+        if open_count >= MAX_OPEN_CHANNELS_PER_PAYER {
+            return Err(ChannelError::TooManyOpenChannels);
+        }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
 
@@ -157,6 +181,7 @@ impl ChannelContract {
             closing_at: 0,
         };
         Self::save_channel(&env, id, &channel);
+        Self::save_open_count(&env, &payer, open_count + 1);
         env.events().publish((symbol_short!("opened"), payer, payee), (id, deposit));
         Ok(id)
     }
@@ -261,6 +286,8 @@ impl ChannelContract {
         ch.status = ChannelStatus::Closed;
         ch.deposited = ch.claimed;
         Self::save_channel(&env, channel_id, &ch);
+        let open_count = Self::get_open_count(&env, &ch.payer);
+        Self::save_open_count(&env, &ch.payer, open_count.saturating_sub(1));
         env.events().publish((symbol_short!("closed"),), channel_id);
         Ok(())
     }
