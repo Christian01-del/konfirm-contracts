@@ -59,7 +59,25 @@ impl ComplianceContract {
         Ok(())
     }
 
-    /// Read-only, and deliberately callable even while paused — pausing the
+    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ComplianceError::NotInitialized)?;
+        admin.require_auth();
+        Ok(admin)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(ComplianceError::Paused);
+        }
+        Ok(())
+    }
+
+    /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {

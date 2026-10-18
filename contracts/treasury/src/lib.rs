@@ -176,11 +176,8 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Permissionless once the approval count reaches the threshold; fails with
-    /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
-    /// from the treasury to the merchant, then marks the settlement `Executed`.
-    /// If the transfer traps, the whole call reverts and the settlement stays
-    /// `Pending`.
+    /// Permissionless — once the threshold is met, anyone may execute. Funds only
+    /// ever move to `settlement.merchant`, so the caller cannot redirect them.
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
         require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
@@ -222,7 +219,7 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Read-only. Returns the stored settlement for `settlement_id`, or `NotFound`.
+    /// Permissionless. Read-only.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
