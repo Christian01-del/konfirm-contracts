@@ -58,7 +58,9 @@ pub struct PaymentContract;
 #[contractimpl]
 impl PaymentContract {
     /// One-time setup. Sets the admin, starts unpaused, and sets the first
-    /// payment id to 1. Requires the admin's auth. See `docs/ERRORS.md`.
+    /// payment id to 1. Requires the admin's auth; not pause-gated (there is
+    /// no pause state yet). Fails with `AlreadyInitialized` on a second call.
+    /// See `docs/ERRORS.md`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), PaymentError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(PaymentError::AlreadyInitialized);
@@ -71,6 +73,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    // Requires the stored admin's auth; `NotInitialized` before `initialize`.
     fn require_admin(env: &Env) -> Result<(), PaymentError> {
         let admin: Address = env
             .storage()
@@ -81,6 +84,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    // Fails with `Paused` while the contract is paused.
     fn require_not_paused(env: &Env) -> Result<(), PaymentError> {
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         if paused {
@@ -89,10 +93,20 @@ impl PaymentContract {
         Ok(())
     }
 
-    /// Admin-only. Writes an attestation that a payer -> merchant transfer
-    /// already happened, and returns the new payment id. Does not move funds.
-    /// The reconciler calls this only after verifying the transfer on Horizon.
-    /// Fails with `ZeroAmount` if `amount <= 0`, and `Paused` while paused.
+    /// Admin-only, pause-gated. Writes an attestation that a payer -> merchant
+    /// transfer already happened, and returns the new payment id. Does not
+    /// move funds. The reconciler calls this only after verifying the transfer
+    /// on Horizon.
+    ///
+    /// - `merchant`: the address that received the funds.
+    /// - `payer`: the address the funds came from.
+    /// - `link_id`: the off-chain payment link this payment settles.
+    /// - `amount`: the transferred amount in the asset's base units; must be `> 0`.
+    /// - `tx_hash`: hash of the Stellar transaction that moved the funds. Each
+    ///   hash can be recorded once.
+    ///
+    /// Fails with `InvalidAmount` if `amount <= 0`, `DuplicateTxHash` if
+    /// `tx_hash` was already recorded, and `Paused` while paused.
     pub fn record_payment(
         env: Env,
         merchant: Address,
@@ -130,9 +144,11 @@ impl PaymentContract {
         Ok(id)
     }
 
-    /// Admin-only. Flags an existing payment as refunded. Bookkeeping only:
-    /// the refund transfer itself is not made by this contract. Fails with
-    /// `NotFound` for an unknown id and `AlreadyRefunded` if already flagged.
+    /// Admin-only, pause-gated. Flags an existing payment as refunded.
+    /// Bookkeeping only: the refund transfer itself is not made by this
+    /// contract. Fails with `NotFound` for an unknown id, `AlreadyRefunded` if
+    /// already flagged, `Voided` if the payment was voided, and `Paused` while
+    /// paused.
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -155,9 +171,11 @@ impl PaymentContract {
         Ok(())
     }
 
-    // Marks a record as mis-recorded: no money moved, so nothing is reversed on
-    // the ledger. The record itself is never rewritten; the voided flag sits
-    // alongside it and consumers must check is_voided before trusting it.
+    /// Admin-only, pause-gated. Marks a record as mis-recorded: no money moved,
+    /// so nothing is reversed on the ledger. The record itself is never
+    /// rewritten; the voided flag sits alongside it and consumers must check
+    /// `is_voided` before trusting it. Fails with `NotFound`, `AlreadyVoided`,
+    /// `AlreadyRefunded`, or `Paused` while paused.
     pub fn void_payment(env: Env, payment_id: u64) -> Result<(), PaymentError> {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
@@ -177,10 +195,13 @@ impl PaymentContract {
         Ok(())
     }
 
+    // Raw voided flag; `false` for unknown ids. Callers check existence first.
     fn is_voided_flag(env: &Env, payment_id: u64) -> bool {
         env.storage().persistent().get(&DataKey::Voided(payment_id)).unwrap_or(false)
     }
 
+    /// Permissionless. Read-only and not pause-gated. Returns whether the
+    /// payment was voided, or `NotFound` for an unknown id.
     pub fn is_voided(env: Env, payment_id: u64) -> Result<bool, PaymentError> {
         if !env.storage().persistent().has(&DataKey::Payment(payment_id)) {
             return Err(PaymentError::NotFound);
@@ -188,6 +209,8 @@ impl PaymentContract {
         Ok(Self::is_voided_flag(&env, payment_id))
     }
 
+    /// Permissionless. Read-only and not pause-gated. Returns the stored
+    /// record, or `NotFound` for an unknown id. Does not reflect `is_voided`.
     pub fn get_payment(env: Env, payment_id: u64) -> Result<PaymentRecord, PaymentError> {
         env.storage()
             .persistent()
@@ -220,6 +243,8 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Admin-only. Blocks `record_payment`, `mark_refunded` and `void_payment`
+    /// until unpaused. Reads and `set_admin` keep working while paused.
     pub fn pause(env: Env) -> Result<(), PaymentError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -227,7 +252,7 @@ impl PaymentContract {
         Ok(())
     }
 
-    /// Admin-only. Lifts a pause set by `pause`.
+    /// Admin-only. Lifts a pause set by `pause`. Callable while paused.
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -235,6 +260,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only. Returns whether the contract is paused.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
