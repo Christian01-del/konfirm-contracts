@@ -130,7 +130,9 @@ contracts/
   payment/      payment attestation + refund tracking
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
-artifacts/      generated deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy)
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
+                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
 ```
 
 ## Known limitations
