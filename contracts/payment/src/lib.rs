@@ -38,7 +38,7 @@ pub enum PaymentError {
     Unauthorized = 3,
     Paused = 4,
     NotFound = 5,
-    ZeroAmount = 6,
+    InvalidAmount = 6,
     AlreadyRefunded = 7,
 }
 
@@ -87,7 +87,7 @@ impl PaymentContract {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         if amount <= 0 {
-            return Err(PaymentError::ZeroAmount);
+            return Err(PaymentError::InvalidAmount);
         }
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
@@ -183,7 +183,7 @@ mod test {
         let tx_hash = BytesN::from_array(&env, &[0u8; 32]);
 
         let res = client.try_record_payment(&merchant, &payer, &1u64, &0i128, &tx_hash);
-        assert_eq!(res, Err(Ok(PaymentError::ZeroAmount)));
+        assert_eq!(res, Err(Ok(PaymentError::InvalidAmount)));
     }
 
     #[test]
