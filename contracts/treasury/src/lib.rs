@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
 #[contracttype]
@@ -16,6 +17,8 @@ pub struct Settlement {
     pub merchant: Address,
     pub amount: i128,
     pub approvals: Vec<Address>,
+    // Parallel to `approvals`: approved_at[i] is the ledger timestamp at which approvals[i] signed.
+    pub approved_at: Vec<u64>,
     pub status: SettlementStatus,
 }
 
@@ -48,11 +51,24 @@ pub enum TreasuryError {
     InvalidThreshold = 11,
 }
 
+impl From<CommonError> for TreasuryError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => TreasuryError::NotInitialized,
+            CommonError::Paused => TreasuryError::Paused,
+        }
+    }
+}
+
 #[contract]
 pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
+    /// One-time setup. Stores the admin, the payout token, the signer set and
+    /// the approval threshold. Fails with `InvalidThreshold` unless
+    /// `1 <= threshold <= signers.len()`. The contract holds no funds until
+    /// it is funded separately; `execute_settlement` pays out of its balance.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -74,14 +90,6 @@ impl TreasuryContract {
         env.storage().instance().set(&DataKey::Threshold, &threshold);
         env.storage().instance().set(&DataKey::NextId, &1u64);
         env.events().publish((symbol_short!("init"),), admin);
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), TreasuryError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(TreasuryError::Paused);
-        }
         Ok(())
     }
 
@@ -108,6 +116,9 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Signer-only. Opens a new `Pending` settlement for `merchant` and returns
+    /// its id. The proposer's approval is counted immediately. Does not move
+    /// funds. Fails with `ZeroAmount` if `amount <= 0`.
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -115,7 +126,7 @@ impl TreasuryContract {
         amount: i128,
     ) -> Result<u64, TreasuryError> {
         Self::require_signer(&env, &proposer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
             return Err(TreasuryError::ZeroAmount);
         }
@@ -127,6 +138,7 @@ impl TreasuryContract {
             merchant: merchant.clone(),
             amount,
             approvals: vec![&env, proposer],
+            approved_at: vec![&env, env.ledger().timestamp()],
             status: SettlementStatus::Pending,
         };
         env.storage().persistent().set(&DataKey::Settlement(id), &settlement);
@@ -134,9 +146,11 @@ impl TreasuryContract {
         Ok(id)
     }
 
+    /// Signer-only. Adds `signer`'s approval to a `Pending` settlement. Each
+    /// signer may approve a given settlement once (`AlreadyApproved`).
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         Self::require_signer(&env, &signer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
 
         let mut settlement: Settlement = env
             .storage()
@@ -150,13 +164,19 @@ impl TreasuryContract {
             return Err(TreasuryError::AlreadyApproved);
         }
         settlement.approvals.push_back(signer);
+        settlement.approved_at.push_back(env.ledger().timestamp());
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish((symbol_short!("approved"),), settlement_id);
         Ok(())
     }
 
+    /// Permissionless once the approval count reaches the threshold; fails with
+    /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
+    /// from the treasury to the merchant, then marks the settlement `Executed`.
+    /// If the transfer traps, the whole call reverts and the settlement stays
+    /// `Pending`.
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
             .storage()
             .instance()
@@ -196,6 +216,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Read-only. Returns the stored settlement for `settlement_id`, or `NotFound`.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
@@ -203,6 +224,8 @@ impl TreasuryContract {
             .ok_or(TreasuryError::NotFound)
     }
 
+    /// Admin-only. Blocks `propose_settlement`, `approve_settlement` and
+    /// `execute_settlement` until unpaused. Reads keep working while paused.
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -210,6 +233,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -326,6 +350,19 @@ mod test {
         let contract_id = env.register(TreasuryContract, ());
         let client = TreasuryContractClient::new(&env, &contract_id);
         let res = client.try_initialize(&admin, &token, &signers, &5u32);
+        assert_eq!(res, Err(Ok(TreasuryError::InvalidThreshold)));
+    }
+
+    #[test]
+    fn zero_threshold_rejected_at_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        let signers = vec![&env, Address::generate(&env)];
+        let contract_id = env.register(TreasuryContract, ());
+        let client = TreasuryContractClient::new(&env, &contract_id);
+        let res = client.try_initialize(&admin, &token, &signers, &0u32);
         assert_eq!(res, Err(Ok(TreasuryError::InvalidThreshold)));
     }
 
