@@ -20,6 +20,7 @@ Every contract follows the same shape: an `initialize` entry point, a `pause`/`u
 | `initialize` | `(admin: Address)` |
 | `is_allowed` | `(addr: Address) -> bool` |
 | `block_address` / `allow_address` / `clear_address` | `(addr: Address)` |
+| `set_admin` | `(current_admin: Address, new_admin: Address)` — both must authorize; not pause-gated |
 | `pause` / `unpause` | `()` |
 
 Default-allow: an address is permitted unless explicitly blocked. `clear_address` restores the default rather than leaving an explicit "allowed" entry.
@@ -34,6 +35,7 @@ Default-allow: an address is permitted unless explicitly blocked. `clear_address
 | `record_payment` | see `lib.rs` — writes a payment record |
 | `mark_refunded` | `(payment_id: u64)` — rejects a second refund on the same ID |
 | `get_payment` | `(payment_id: u64) -> PaymentRecord` |
+| `set_admin` | `(current_admin: Address, new_admin: Address)` — both must authorize; not pause-gated |
 | `pause` / `unpause` | `()` |
 
 ### `treasury`
@@ -60,6 +62,7 @@ Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-t
 | `initiate_close` / `finalize_close` | unilateral close, respecting the challenge period; refunds the remainder once it elapses |
 | `hold_channel` / `release_hold` | freezes/unfreezes checkpointing without closing |
 | `get_channel_info` | `(channel_id: u64) -> Channel` |
+| `set_admin` | `(current_admin: Address, new_admin: Address)` — both must authorize; not pause-gated |
 | `pause` / `unpause` | `()` |
 
 Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload, so a signature from this contract can never be replayed against a different one.

@@ -157,8 +157,31 @@ impl PaymentContract {
             .ok_or(PaymentError::NotFound)
     }
 
-    /// Admin-only. Blocks `record_payment` and `mark_refunded` until unpaused.
-    /// Reads (`get_payment`) keep working while paused.
+    /// Rotates the admin key. Requires auth from both the current admin and
+    /// the incoming one, so a handoff can't strand the contract on an address
+    /// nobody holds. Deliberately not pause-gated: rotating away from a
+    /// suspected key must still work during an incident.
+    ///
+    /// This does NOT defend against a leaked current key on its own — that key
+    /// can still rotate to an attacker-held address. Quorum-based control
+    /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
+    /// that gap; see docs/KEYS.md.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), PaymentError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(PaymentError::NotInitialized)?;
+        if current_admin != admin {
+            return Err(PaymentError::Unauthorized);
+        }
+        current_admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish((symbol_short!("admin"),), new_admin);
+        Ok(())
+    }
+
     pub fn pause(env: Env) -> Result<(), PaymentError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
