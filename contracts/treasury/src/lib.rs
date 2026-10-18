@@ -40,6 +40,7 @@ enum DataKey {
 pub enum TreasuryError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
+    /// Never returned: admin/signer gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
     NotFound = 5,
