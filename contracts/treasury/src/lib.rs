@@ -184,14 +184,15 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Permissionless once the approval count reaches the threshold; fails with
+    /// Signer-only, once the approval count reaches the threshold; fails with
     /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
     /// from the treasury to the merchant, then marks the settlement `Executed`.
     /// If the transfer traps, the whole call reverts and the settlement stays
     /// `Pending`.
-    pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
+    pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        Self::require_not_paused(&env)?;
+        Self::require_signer(&env, &caller)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
             .storage()
             .instance()
@@ -257,6 +258,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }

@@ -32,6 +32,7 @@ enum DataKey {
     NextId,
     Payment(u64),
     Voided(u64),
+    ByTxHash(BytesN<32>),
 }
 
 #[contracterror]
@@ -48,6 +49,7 @@ pub enum PaymentError {
     AlreadyRefunded = 7,
     AlreadyVoided = 8,
     Voided = 9,
+    DuplicateTxHash = 10,
 }
 
 #[contract]
@@ -122,6 +124,8 @@ impl PaymentContract {
         };
         env.storage().persistent().set(&DataKey::Payment(id), &record);
         env.storage().persistent().extend_ttl(&DataKey::Payment(id), TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage().persistent().set(&DataKey::ByTxHash(tx_hash.clone()), &id);
+        env.storage().persistent().extend_ttl(&DataKey::ByTxHash(tx_hash), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("recorded"), merchant), (id, link_id, amount));
         Ok(id)
     }
