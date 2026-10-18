@@ -3,6 +3,9 @@
 use konfirm_common::{require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
+const TTL_THRESHOLD: u32 = 100;
+const TTL_EXTEND_TO: u32 = 5_000_000;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SettlementStatus {
@@ -132,6 +135,7 @@ impl TreasuryContract {
         merchant: Address,
         amount: i128,
     ) -> Result<u64, TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &proposer)?;
         require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
@@ -149,6 +153,7 @@ impl TreasuryContract {
             status: SettlementStatus::Pending,
         };
         env.storage().persistent().set(&DataKey::Settlement(id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("proposed"), merchant), (id, amount));
         Ok(id)
     }
@@ -156,6 +161,7 @@ impl TreasuryContract {
     /// Signer-only. Adds `signer`'s approval to a `Pending` settlement. Each
     /// signer may approve a given settlement once (`AlreadyApproved`).
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &signer)?;
         require_not_paused(&env, &DataKey::Paused)?;
 
@@ -173,12 +179,18 @@ impl TreasuryContract {
         settlement.approvals.push_back(signer);
         settlement.approved_at.push_back(env.ledger().timestamp());
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(settlement_id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("approved"),), settlement_id);
         Ok(())
     }
 
-    pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
-        Self::require_signer(&env, &caller)?;
+    /// Permissionless once the approval count reaches the threshold; fails with
+    /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
+    /// from the treasury to the merchant, then marks the settlement `Executed`.
+    /// If the transfer traps, the whole call reverts and the settlement stays
+    /// `Pending`.
+    pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_not_paused(&env)?;
         let threshold: u32 = env
             .storage()
@@ -215,6 +227,7 @@ impl TreasuryContract {
 
         settlement.status = SettlementStatus::Executed;
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
+        env.storage().persistent().extend_ttl(&DataKey::Settlement(settlement_id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("executed"),), settlement_id);
         Ok(())
     }
@@ -230,17 +243,17 @@ impl TreasuryContract {
     /// Admin-only. Blocks `propose_settlement`, `approve_settlement` and
     /// `execute_settlement` until unpaused. Reads keep working while paused.
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
     /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
