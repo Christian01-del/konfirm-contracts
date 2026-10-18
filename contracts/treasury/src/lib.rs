@@ -17,6 +17,8 @@ pub struct Settlement {
     pub merchant: Address,
     pub amount: i128,
     pub approvals: Vec<Address>,
+    // Parallel to `approvals`: approved_at[i] is the ledger timestamp at which approvals[i] signed.
+    pub approved_at: Vec<u64>,
     pub status: SettlementStatus,
 }
 
@@ -135,6 +137,7 @@ impl TreasuryContract {
             merchant: merchant.clone(),
             amount,
             approvals: vec![&env, proposer],
+            approved_at: vec![&env, env.ledger().timestamp()],
             status: SettlementStatus::Pending,
         };
         env.storage().persistent().set(&DataKey::Settlement(id), &settlement);
@@ -160,6 +163,7 @@ impl TreasuryContract {
             return Err(TreasuryError::AlreadyApproved);
         }
         settlement.approvals.push_back(signer);
+        settlement.approved_at.push_back(env.ledger().timestamp());
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish((symbol_short!("approved"),), settlement_id);
         Ok(())
