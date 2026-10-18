@@ -54,7 +54,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
-    AllowedToken(Address),
+    HeldFrom(u64),
 }
 
 #[contracterror]
@@ -315,9 +315,16 @@ impl ChannelContract {
         Ok(())
     }
 
+    /// Only Open or Closing channels can be held. Closing is included so an
+    /// admin can freeze a suspect exit; release_hold restores whichever of the
+    /// two it was in, so a unilateral exit is never silently reopened.
     pub fn hold_channel(env: Env, channel_id: u64) -> Result<(), ChannelError> {
         require_admin(&env, &DataKey::Admin)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
+        if ch.status != ChannelStatus::Open && ch.status != ChannelStatus::Closing {
+            return Err(ChannelError::NotOpen);
+        }
+        env.storage().persistent().set(&DataKey::HeldFrom(channel_id), &ch.status);
         ch.status = ChannelStatus::Held;
         Self::save_channel(&env, channel_id, &ch);
         env.events().publish((symbol_short!("held"),), channel_id);
@@ -330,7 +337,13 @@ impl ChannelContract {
         if ch.status != ChannelStatus::Held {
             return Err(ChannelError::NotOpen);
         }
-        ch.status = ChannelStatus::Open;
+        let prior: ChannelStatus = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HeldFrom(channel_id))
+            .ok_or(ChannelError::NotOpen)?;
+        env.storage().persistent().remove(&DataKey::HeldFrom(channel_id));
+        ch.status = prior;
         Self::save_channel(&env, channel_id, &ch);
         env.events().publish((symbol_short!("release"),), channel_id);
         Ok(())
