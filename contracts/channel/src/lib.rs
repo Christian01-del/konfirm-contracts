@@ -439,7 +439,7 @@ impl ChannelContract {
 mod test {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 
     fn setup_token(env: &Env, admin: &Address) -> Address {
         // Stellar Asset Contract test token, provided by soroban-sdk testutils.
@@ -878,5 +878,112 @@ mod test {
         client.initiate_close(&payer, &id);
         assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
         assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Closing);
+    }
+
+    // Every other initiate_close call site uses the payer, so the payee half
+    // of the payer-or-payee guard had no coverage: flipping it would reject a
+    // legitimate payee close and admit an unrelated caller.
+    #[test]
+    fn initiate_close_by_payee_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
+
+        client.initiate_close(&payee, &id);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.status, ChannelStatus::Closing);
+        assert_eq!(ch.closing_at, env.ledger().timestamp());
+    }
+
+    #[test]
+    fn initiate_close_by_unrelated_address_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
+
+        let res = client.try_initiate_close(&outsider, &id);
+        assert_eq!(res, Err(Ok(ChannelError::Unauthorized)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+    }
+
+    // When the payee has already claimed the full deposit, finalize_close has
+    // nothing to refund and must skip the payer transfer entirely rather than
+    // issue a zero-amount one.
+    #[test]
+    fn finalize_close_skips_transfer_when_deposit_fully_claimed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &3_600u64);
+        client.set_token_allowed(&token_id, &true);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+        let deposit: i128 = 500_0000;
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &deposit, &None);
+
+        let nonce: u64 = 1;
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, deposit);
+        let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
+        client.checkpoint(&id, &deposit, &nonce, &signature);
+
+        client.initiate_close(&payer, &id);
+        env.ledger().with_mut(|l| l.timestamp += 3_601);
+        client.finalize_close(&id);
+
+        // The SAC accepts a zero-amount transfer, so balances alone can't
+        // tell a skipped transfer from a zero one — the token contract's
+        // event log can. finalize_close's own event is the only one expected.
+        let token_events = env.events().all().filter_by_contract(&token_id);
+        assert_eq!(token_events.events().len(), 0);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.status, ChannelStatus::Closed);
+        assert_eq!(ch.claimed, deposit);
+
+        let token_client = token::TokenClient::new(&env, &token_id);
+        assert_eq!(token_client.balance(&payee), deposit);
+        assert_eq!(token_client.balance(&payer), 1_000_0000i128 - deposit);
+        assert_eq!(token_client.balance(&contract_id), 0i128);
     }
 }
