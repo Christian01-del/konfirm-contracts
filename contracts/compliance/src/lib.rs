@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
 
 #[contracttype]
@@ -19,6 +20,15 @@ pub enum ComplianceError {
     NotInitialized = 2,
     Unauthorized = 3,
     Paused = 4,
+}
+
+impl From<CommonError> for ComplianceError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => ComplianceError::NotInitialized,
+            CommonError::Paused => ComplianceError::Paused,
+        }
+    }
 }
 
 #[contract]
@@ -41,24 +51,6 @@ impl ComplianceContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(ComplianceError::NotInitialized)?;
-        admin.require_auth();
-        Ok(admin)
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(ComplianceError::Paused);
-        }
-        Ok(())
-    }
-
     /// Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
@@ -67,8 +59,8 @@ impl ComplianceContract {
     }
 
     pub fn block_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         env.storage().persistent().set(&DataKey::Blocked(addr.clone()), &true);
         env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &false);
         env.events().publish((symbol_short!("blocked"),), addr);
@@ -78,8 +70,8 @@ impl ComplianceContract {
     /// Explicitly clears a block (e.g. after manual review) and leaves an
     /// audit record distinct from an address that was simply never flagged.
     pub fn allow_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
         env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &true);
         env.events().publish((symbol_short!("allowed"),), addr);
@@ -87,8 +79,8 @@ impl ComplianceContract {
     }
 
     pub fn clear_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
         env.storage().persistent().remove(&DataKey::Allowed(addr.clone()));
         env.events().publish((symbol_short!("cleared"),), addr);
@@ -96,14 +88,12 @@ impl ComplianceContract {
     }
 
     pub fn pause(env: Env) -> Result<(), ComplianceError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), ComplianceError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }
@@ -111,7 +101,8 @@ impl ComplianceContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
 
     fn setup(env: &Env) -> (ComplianceContractClient<'_>, Address) {
         let admin = Address::generate(env);
@@ -171,6 +162,10 @@ mod test {
         client.pause();
         let res = client.try_block_address(&addr);
         assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_allow_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_clear_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
     }
 
     #[test]
@@ -180,5 +175,28 @@ mod test {
         let (client, admin) = setup(&env);
         let res = client.try_initialize(&admin);
         assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
+    }
+
+    #[test]
+    fn non_admin_signer_cannot_call_admin_function() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let non_admin = Address::generate(&env);
+        let addr = Address::generate(&env);
+
+        // Only a non-admin address authorizes the call; the admin's
+        // require_auth() must therefore fail.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "block_address",
+                args: (addr.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_block_address(&addr).is_err());
+        assert!(client.is_allowed(&addr));
     }
 }

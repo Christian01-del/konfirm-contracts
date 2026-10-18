@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env};
 
 // This contract is an attestation layer, not an escrow. Funds for a checkout
@@ -40,6 +41,15 @@ pub enum PaymentError {
     NotFound = 5,
     ZeroAmount = 6,
     AlreadyRefunded = 7,
+}
+
+impl From<CommonError> for PaymentError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => PaymentError::NotInitialized,
+            CommonError::Paused => PaymentError::Paused,
+        }
+    }
 }
 
 #[contract]
@@ -90,8 +100,8 @@ impl PaymentContract {
         amount: i128,
         tx_hash: BytesN<32>,
     ) -> Result<u64, PaymentError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
             return Err(PaymentError::ZeroAmount);
         }
@@ -116,8 +126,8 @@ impl PaymentContract {
     /// the refund transfer itself is not made by this contract. Fails with
     /// `NotFound` for an unknown id and `AlreadyRefunded` if already flagged.
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let mut record: PaymentRecord = env
             .storage()
             .persistent()
@@ -143,15 +153,13 @@ impl PaymentContract {
     /// Admin-only. Blocks `record_payment` and `mark_refunded` until unpaused.
     /// Reads (`get_payment`) keep working while paused.
     pub fn pause(env: Env) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }
@@ -159,7 +167,8 @@ impl PaymentContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
 
     fn setup(env: &Env) -> (PaymentContractClient<'_>, Address) {
         let admin = Address::generate(env);
@@ -232,8 +241,38 @@ mod test {
         let payer = Address::generate(&env);
         let tx_hash = BytesN::from_array(&env, &[2u8; 32]);
 
+        let id = client.record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
         client.pause();
-        let res = client.try_record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
+        let res = client.try_record_payment(&merchant, &payer, &2u64, &100_0000i128, &tx_hash);
         assert_eq!(res, Err(Ok(PaymentError::Paused)));
+        let res = client.try_mark_refunded(&id);
+        assert_eq!(res, Err(Ok(PaymentError::Paused)));
+    }
+
+    #[test]
+    fn non_admin_signer_cannot_call_admin_function() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let non_admin = Address::generate(&env);
+        let merchant = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let tx_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+        // Only a non-admin address authorizes the call; the admin's
+        // require_auth() must therefore fail.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "record_payment",
+                args: (merchant.clone(), payer.clone(), 1u64, 100_0000i128, tx_hash.clone())
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let res = client.try_record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
+        assert!(res.is_err());
+        assert_eq!(client.try_get_payment(&1u64), Err(Ok(PaymentError::NotFound)));
     }
 }

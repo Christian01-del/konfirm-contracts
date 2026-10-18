@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
 #[contracttype]
@@ -48,6 +49,15 @@ pub enum TreasuryError {
     InvalidThreshold = 11,
 }
 
+impl From<CommonError> for TreasuryError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => TreasuryError::NotInitialized,
+            CommonError::Paused => TreasuryError::Paused,
+        }
+    }
+}
+
 #[contract]
 pub struct TreasuryContract;
 
@@ -77,14 +87,6 @@ impl TreasuryContract {
         env.storage().instance().set(&DataKey::Signers, &signers);
         env.storage().instance().set(&DataKey::Threshold, &threshold);
         env.storage().instance().set(&DataKey::NextId, &1u64);
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), TreasuryError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(TreasuryError::Paused);
-        }
         Ok(())
     }
 
@@ -121,7 +123,7 @@ impl TreasuryContract {
         amount: i128,
     ) -> Result<u64, TreasuryError> {
         Self::require_signer(&env, &proposer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
             return Err(TreasuryError::ZeroAmount);
         }
@@ -144,7 +146,7 @@ impl TreasuryContract {
     /// signer may approve a given settlement once (`AlreadyApproved`).
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         Self::require_signer(&env, &signer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
 
         let mut settlement: Settlement = env
             .storage()
@@ -169,7 +171,7 @@ impl TreasuryContract {
     /// If the transfer traps, the whole call reverts and the settlement stays
     /// `Pending`.
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
             .storage()
             .instance()
@@ -220,15 +222,13 @@ impl TreasuryContract {
     /// Admin-only. Blocks `propose_settlement`, `approve_settlement` and
     /// `execute_settlement` until unpaused. Reads keep working while paused.
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }
