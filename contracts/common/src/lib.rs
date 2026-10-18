@@ -27,6 +27,8 @@ where
     Ok(admin)
 }
 
+/// Permissionless. A read-only guard, not a contract entry point: it checks
+/// the pause flag and leaves authorization to the calling contract function.
 pub fn require_not_paused<K>(env: &Env, paused_key: &K) -> Result<(), CommonError>
 where
     K: IntoVal<Env, Val>,

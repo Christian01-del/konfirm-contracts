@@ -107,7 +107,7 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Allowed"
+                    "symbol": "Status"
                   },
                   {
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -116,34 +116,11 @@
               },
               "durability": "persistent",
               "val": {
-                "bool": false
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4095
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-              "key": {
                 "vec": [
                   {
                     "symbol": "Blocked"
-                  },
-                  {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                   }
                 ]
-              },
-              "durability": "persistent",
-              "val": {
-                "bool": true
               }
             }
           },
