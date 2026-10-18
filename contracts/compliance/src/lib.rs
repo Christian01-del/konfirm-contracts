@@ -171,6 +171,10 @@ mod test {
         client.pause();
         let res = client.try_block_address(&addr);
         assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_allow_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_clear_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
     }
 
     #[test]
