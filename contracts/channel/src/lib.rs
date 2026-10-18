@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes,
     BytesN, Env,
@@ -16,6 +17,11 @@ use soroban_sdk::{
 // withdrawal someone can already prove is owed to them.
 
 const DOMAIN_TAG: &[u8; 15] = b"KONFIRM_CHAN_V1";
+
+// Cap on channels a single payer can have that aren't yet Closed. Each open
+// channel is persistent storage the operator pays to keep alive, so this
+// bounds how much any one account can make the protocol carry for free.
+const MAX_OPEN_CHANNELS_PER_PAYER: u32 = 20;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +127,19 @@ impl ChannelContract {
         env.storage().persistent().extend_ttl(&DataKey::Channel(id), 100, 5_000_000);
     }
 
+    fn save_open_count(env: &Env, payer: &Address, count: u32) {
+        let key = DataKey::OpenCount(payer.clone());
+        env.storage().persistent().set(&key, &count);
+        env.storage().persistent().extend_ttl(&key, 100, 5_000_000);
+    }
+
+    fn get_open_count(env: &Env, payer: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OpenCount(payer.clone()))
+            .unwrap_or(0)
+    }
+
     /// The message a payer signs off-chain to authorize a cumulative amount.
     /// Fixed-width, domain-tagged encoding — never string concatenation,
     /// which is how signatures end up ambiguous across field boundaries.
@@ -141,7 +160,7 @@ impl ChannelContract {
         deposit: i128,
     ) -> Result<u64, ChannelError> {
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
         }
@@ -166,13 +185,14 @@ impl ChannelContract {
             closing_at: 0,
         };
         Self::save_channel(&env, id, &channel);
+        Self::save_open_count(&env, &payer, open_count + 1);
         env.events().publish((symbol_short!("opened"), payer, payee), (id, deposit));
         Ok(id)
     }
 
     pub fn top_up(env: Env, payer: Address, channel_id: u64, amount: i128) -> Result<(), ChannelError> {
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.payer != payer {
             return Err(ChannelError::Unauthorized);
@@ -270,12 +290,14 @@ impl ChannelContract {
         ch.status = ChannelStatus::Closed;
         ch.deposited = ch.claimed;
         Self::save_channel(&env, channel_id, &ch);
+        let open_count = Self::get_open_count(&env, &ch.payer);
+        Self::save_open_count(&env, &ch.payer, open_count.saturating_sub(1));
         env.events().publish((symbol_short!("closed"),), channel_id);
         Ok(())
     }
 
     pub fn hold_channel(env: Env, channel_id: u64) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         ch.status = ChannelStatus::Held;
         Self::save_channel(&env, channel_id, &ch);
@@ -284,7 +306,7 @@ impl ChannelContract {
     }
 
     pub fn release_hold(env: Env, channel_id: u64) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.status != ChannelStatus::Held {
             return Err(ChannelError::NotOpen);
@@ -309,14 +331,12 @@ impl ChannelContract {
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }

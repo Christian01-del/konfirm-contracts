@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env};
 
 // This contract is an attestation layer, not an escrow. Funds for a checkout
@@ -42,6 +43,15 @@ pub enum PaymentError {
     AlreadyRefunded = 7,
 }
 
+impl From<CommonError> for PaymentError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => PaymentError::NotInitialized,
+            CommonError::Paused => PaymentError::Paused,
+        }
+    }
+}
+
 #[contract]
 pub struct PaymentContract;
 
@@ -58,24 +68,6 @@ impl PaymentContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), PaymentError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(PaymentError::NotInitialized)?;
-        admin.require_auth();
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), PaymentError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(PaymentError::Paused);
-        }
-        Ok(())
-    }
-
     pub fn record_payment(
         env: Env,
         merchant: Address,
@@ -84,8 +76,8 @@ impl PaymentContract {
         amount: i128,
         tx_hash: BytesN<32>,
     ) -> Result<u64, PaymentError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
             return Err(PaymentError::ZeroAmount);
         }
@@ -107,8 +99,8 @@ impl PaymentContract {
     }
 
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        Self::require_not_paused(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let mut record: PaymentRecord = env
             .storage()
             .persistent()
@@ -131,14 +123,12 @@ impl PaymentContract {
     }
 
     pub fn pause(env: Env) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }
