@@ -39,6 +39,7 @@ pub struct Channel {
     pub payee: Address,
     pub token: Address,
     pub payer_pubkey: BytesN<32>,
+    pub delegated_closer: Option<Address>,
     pub deposited: i128,
     pub claimed: i128,
     pub nonce: u64,
@@ -171,6 +172,7 @@ impl ChannelContract {
         token: Address,
         payer_pubkey: BytesN<32>,
         deposit: i128,
+        delegated_closer: Option<Address>,
     ) -> Result<u64, ChannelError> {
         payer.require_auth();
         require_not_paused(&env, &DataKey::Paused)?;
@@ -191,6 +193,7 @@ impl ChannelContract {
             payee: payee.clone(),
             token,
             payer_pubkey,
+            delegated_closer,
             deposited: deposit,
             claimed: 0,
             nonce: 0,
@@ -270,7 +273,10 @@ impl ChannelContract {
     pub fn initiate_close(env: Env, caller: Address, channel_id: u64) -> Result<(), ChannelError> {
         caller.require_auth();
         let mut ch = Self::get_channel(&env, channel_id)?;
-        if caller != ch.payer && caller != ch.payee {
+        // The delegated closer lets a third party (e.g. the facilitator) start
+        // the challenge window on an idle channel where neither party will.
+        // It can only start a close — funds still go to the payer on finalize.
+        if caller != ch.payer && caller != ch.payee && ch.delegated_closer.as_ref() != Some(&caller) {
             return Err(ChannelError::Unauthorized);
         }
         if ch.status != ChannelStatus::Open {
@@ -443,7 +449,7 @@ mod test {
         // test harness here only exercises the accounting and TTL logic, not
         // signature generation (that lives in the reconciler/client SDK).
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let ch = client.get_channel_info(&id);
         assert_eq!(ch.deposited, 500_0000i128);
@@ -470,7 +476,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.initiate_close(&payer, &id);
         let res = client.try_finalize_close(&id);
@@ -494,7 +500,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &3_600u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.initiate_close(&payer, &id);
         env.ledger().with_mut(|l| l.timestamp += 3_601);
@@ -558,7 +564,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let bogus_sig = BytesN::from_array(&env, &[0u8; 64]);
         let res = client.try_checkpoint(&id, &0i128, &0u64, &bogus_sig);
@@ -582,7 +588,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.hold_channel(&id);
         let bogus_sig = BytesN::from_array(&env, &[0u8; 64]);
@@ -614,7 +620,7 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let cumulative_amount: i128 = 100_0000;
         let nonce: u64 = 1;
@@ -660,7 +666,7 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let sign_claim = |nonce: u64, amount: i128| -> BytesN<64> {
             let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, amount);
@@ -715,7 +721,7 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         // A validly-signed claim for more than was ever deposited — must be
         // rejected on the deposit check, not accepted just because the
@@ -746,7 +752,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.top_up(&payer, &id, &200_0000i128);
 
