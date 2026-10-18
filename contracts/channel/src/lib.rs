@@ -1,6 +1,6 @@
 #![no_std]
 
-use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
+use konfirm_common::{require_not_paused, CommonError};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes,
     BytesN, Env,
@@ -58,6 +58,8 @@ enum DataKey {
     NextId,
     Channel(u64),
     HeldFrom(u64),
+    AllowedToken(Address),
+    OpenCount(Address),
 }
 
 #[contracterror]
@@ -77,6 +79,16 @@ pub enum ChannelError {
     Held = 11,
     ZeroDeposit = 12,
     TokenNotAllowed = 13,
+    TooManyOpenChannels = 14,
+}
+
+impl From<CommonError> for ChannelError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => ChannelError::NotInitialized,
+            CommonError::Paused => ChannelError::Paused,
+        }
+    }
 }
 
 #[contract]
@@ -104,14 +116,6 @@ impl ChannelContract {
             .get(&DataKey::Admin)
             .ok_or(ChannelError::NotInitialized)?;
         admin.require_auth();
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), ChannelError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(ChannelError::Paused);
-        }
         Ok(())
     }
 
@@ -184,6 +188,10 @@ impl ChannelContract {
         }
         if !Self::is_token_allowed(&env, &token) {
             return Err(ChannelError::TokenNotAllowed);
+        }
+        let open_count = Self::get_open_count(&env, &payer);
+        if open_count >= MAX_OPEN_CHANNELS_PER_PAYER {
+            return Err(ChannelError::TooManyOpenChannels);
         }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
@@ -369,6 +377,18 @@ impl ChannelContract {
         Self::get_channel(&env, channel_id)
     }
 
+    /// Admin-gated allowlist of token contracts that open_channel accepts.
+    /// Default-deny: a token is unusable until explicitly allowed here.
+    pub fn set_token_allowed(env: Env, token: Address, allowed: bool) -> Result<(), ChannelError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Self::require_admin(&env)?;
+        let key = DataKey::AllowedToken(token.clone());
+        env.storage().persistent().set(&key, &allowed);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.events().publish((symbol_short!("tokenok"),), (token, allowed));
+        Ok(())
+    }
+
     /// Rotates the admin key. Requires auth from both the current admin and
     /// the incoming one, so a handoff can't strand the contract on an address
     /// nobody holds. Deliberately not pause-gated: rotating away from a
@@ -409,6 +429,7 @@ impl ChannelContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
@@ -418,7 +439,7 @@ impl ChannelContract {
 mod test {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 
     fn setup_token(env: &Env, admin: &Address) -> Address {
         // Stellar Asset Contract test token, provided by soroban-sdk testutils.
@@ -453,6 +474,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
 
         // In production the payer's real Ed25519 keypair signs off-chain; the
         // test harness here only exercises the accounting and TTL logic, not
@@ -484,6 +506,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
@@ -508,6 +531,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &3_600u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
@@ -536,8 +560,9 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &3_600u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.initiate_close(&payer, &id);
 
@@ -572,6 +597,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
@@ -596,6 +622,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
@@ -626,6 +653,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
@@ -672,6 +700,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &3_600u64);
+        client.set_token_allowed(&token_id, &true);
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
@@ -727,6 +756,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
@@ -760,6 +790,7 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
         let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
@@ -789,10 +820,11 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.hold_channel(&id);
         assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Held);
@@ -809,7 +841,7 @@ mod test {
 
         let cumulative_amount: i128 = 100_0000;
         let nonce: u64 = 1;
-        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, cumulative_amount);
         let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
         client.checkpoint(&id, &cumulative_amount, &nonce, &signature);
 
@@ -834,8 +866,9 @@ mod test {
         let contract_id = env.register(ChannelContract, ());
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         // Open channel: nothing to release.
         assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
@@ -845,5 +878,112 @@ mod test {
         client.initiate_close(&payer, &id);
         assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
         assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Closing);
+    }
+
+    // Every other initiate_close call site uses the payer, so the payee half
+    // of the payer-or-payee guard had no coverage: flipping it would reject a
+    // legitimate payee close and admit an unrelated caller.
+    #[test]
+    fn initiate_close_by_payee_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
+
+        client.initiate_close(&payee, &id);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.status, ChannelStatus::Closing);
+        assert_eq!(ch.closing_at, env.ledger().timestamp());
+    }
+
+    #[test]
+    fn initiate_close_by_unrelated_address_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        client.set_token_allowed(&token_id, &true);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
+
+        let res = client.try_initiate_close(&outsider, &id);
+        assert_eq!(res, Err(Ok(ChannelError::Unauthorized)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+    }
+
+    // When the payee has already claimed the full deposit, finalize_close has
+    // nothing to refund and must skip the payer transfer entirely rather than
+    // issue a zero-amount one.
+    #[test]
+    fn finalize_close_skips_transfer_when_deposit_fully_claimed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &3_600u64);
+        client.set_token_allowed(&token_id, &true);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+        let deposit: i128 = 500_0000;
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &deposit, &None);
+
+        let nonce: u64 = 1;
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, deposit);
+        let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
+        client.checkpoint(&id, &deposit, &nonce, &signature);
+
+        client.initiate_close(&payer, &id);
+        env.ledger().with_mut(|l| l.timestamp += 3_601);
+        client.finalize_close(&id);
+
+        // The SAC accepts a zero-amount transfer, so balances alone can't
+        // tell a skipped transfer from a zero one — the token contract's
+        // event log can. finalize_close's own event is the only one expected.
+        let token_events = env.events().all().filter_by_contract(&token_id);
+        assert_eq!(token_events.events().len(), 0);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.status, ChannelStatus::Closed);
+        assert_eq!(ch.claimed, deposit);
+
+        let token_client = token::TokenClient::new(&env, &token_id);
+        assert_eq!(token_client.balance(&payee), deposit);
+        assert_eq!(token_client.balance(&payer), 1_000_0000i128 - deposit);
+        assert_eq!(token_client.balance(&contract_id), 0i128);
     }
 }

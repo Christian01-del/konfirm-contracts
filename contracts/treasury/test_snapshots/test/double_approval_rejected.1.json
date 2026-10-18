@@ -266,6 +266,18 @@
                   },
                   {
                     "key": {
+                      "symbol": "approved_at"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "u64": "0"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "merchant"
                     },
                     "val": {
