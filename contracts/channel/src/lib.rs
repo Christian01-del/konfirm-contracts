@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes,
     BytesN, Env,
@@ -68,6 +69,15 @@ pub enum ChannelError {
     ZeroDeposit = 12,
 }
 
+impl From<CommonError> for ChannelError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => ChannelError::NotInitialized,
+            CommonError::Paused => ChannelError::Paused,
+        }
+    }
+}
+
 #[contract]
 pub struct ChannelContract;
 
@@ -82,24 +92,6 @@ impl ChannelContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::ChallengePeriod, &challenge_period_secs);
         env.storage().instance().set(&DataKey::NextId, &1u64);
-        Ok(())
-    }
-
-    fn require_admin(env: &Env) -> Result<(), ChannelError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(ChannelError::NotInitialized)?;
-        admin.require_auth();
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), ChannelError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(ChannelError::Paused);
-        }
         Ok(())
     }
 
@@ -135,7 +127,7 @@ impl ChannelContract {
         deposit: i128,
     ) -> Result<u64, ChannelError> {
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
         }
@@ -163,7 +155,7 @@ impl ChannelContract {
 
     pub fn top_up(env: Env, payer: Address, channel_id: u64, amount: i128) -> Result<(), ChannelError> {
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.payer != payer {
             return Err(ChannelError::Unauthorized);
@@ -266,7 +258,7 @@ impl ChannelContract {
     }
 
     pub fn hold_channel(env: Env, channel_id: u64) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         ch.status = ChannelStatus::Held;
         Self::save_channel(&env, channel_id, &ch);
@@ -275,7 +267,7 @@ impl ChannelContract {
     }
 
     pub fn release_hold(env: Env, channel_id: u64) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.status != ChannelStatus::Held {
             return Err(ChannelError::NotOpen);
@@ -291,14 +283,12 @@ impl ChannelContract {
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), ChannelError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }

@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
 #[contracttype]
@@ -48,6 +49,15 @@ pub enum TreasuryError {
     InvalidThreshold = 11,
 }
 
+impl From<CommonError> for TreasuryError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => TreasuryError::NotInitialized,
+            CommonError::Paused => TreasuryError::Paused,
+        }
+    }
+}
+
 #[contract]
 pub struct TreasuryContract;
 
@@ -76,14 +86,6 @@ impl TreasuryContract {
         Ok(())
     }
 
-    fn require_not_paused(env: &Env) -> Result<(), TreasuryError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(TreasuryError::Paused);
-        }
-        Ok(())
-    }
-
     fn require_signer(env: &Env, who: &Address) -> Result<(), TreasuryError> {
         who.require_auth();
         let signers: Vec<Address> = env
@@ -97,16 +99,6 @@ impl TreasuryContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), TreasuryError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(TreasuryError::NotInitialized)?;
-        admin.require_auth();
-        Ok(())
-    }
-
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -114,7 +106,7 @@ impl TreasuryContract {
         amount: i128,
     ) -> Result<u64, TreasuryError> {
         Self::require_signer(&env, &proposer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if amount <= 0 {
             return Err(TreasuryError::ZeroAmount);
         }
@@ -135,7 +127,7 @@ impl TreasuryContract {
 
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         Self::require_signer(&env, &signer)?;
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
 
         let mut settlement: Settlement = env
             .storage()
@@ -155,7 +147,7 @@ impl TreasuryContract {
     }
 
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
             .storage()
             .instance()
@@ -203,14 +195,12 @@ impl TreasuryContract {
     }
 
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
     }
 }
