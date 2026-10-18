@@ -136,7 +136,8 @@ impl PaymentContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
 
     fn setup(env: &Env) -> (PaymentContractClient<'_>, Address) {
         let admin = Address::generate(env);
@@ -215,5 +216,32 @@ mod test {
         assert_eq!(res, Err(Ok(PaymentError::Paused)));
         let res = client.try_mark_refunded(&id);
         assert_eq!(res, Err(Ok(PaymentError::Paused)));
+    }
+
+    #[test]
+    fn non_admin_signer_cannot_call_admin_function() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let non_admin = Address::generate(&env);
+        let merchant = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let tx_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+        // Only a non-admin address authorizes the call; the admin's
+        // require_auth() must therefore fail.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "record_payment",
+                args: (merchant.clone(), payer.clone(), 1u64, 100_0000i128, tx_hash.clone())
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let res = client.try_record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
+        assert!(res.is_err());
+        assert_eq!(client.try_get_payment(&1u64), Err(Ok(PaymentError::NotFound)));
     }
 }

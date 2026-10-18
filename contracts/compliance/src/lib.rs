@@ -101,7 +101,8 @@ impl ComplianceContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
 
     fn setup(env: &Env) -> (ComplianceContractClient<'_>, Address) {
         let admin = Address::generate(env);
@@ -174,5 +175,28 @@ mod test {
         let (client, admin) = setup(&env);
         let res = client.try_initialize(&admin);
         assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
+    }
+
+    #[test]
+    fn non_admin_signer_cannot_call_admin_function() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let non_admin = Address::generate(&env);
+        let addr = Address::generate(&env);
+
+        // Only a non-admin address authorizes the call; the admin's
+        // require_auth() must therefore fail.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "block_address",
+                args: (addr.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_block_address(&addr).is_err());
+        assert!(client.is_allowed(&addr));
     }
 }
