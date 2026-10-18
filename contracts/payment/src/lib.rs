@@ -57,6 +57,8 @@ pub struct PaymentContract;
 
 #[contractimpl]
 impl PaymentContract {
+    /// One-time setup. Sets the admin, starts unpaused, and sets the first
+    /// payment id to 1. Requires the admin's auth. See `docs/ERRORS.md`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), PaymentError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(PaymentError::AlreadyInitialized);
@@ -68,6 +70,28 @@ impl PaymentContract {
         Ok(())
     }
 
+    fn require_admin(env: &Env) -> Result<(), PaymentError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(PaymentError::NotInitialized)?;
+        admin.require_auth();
+        Ok(())
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), PaymentError> {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(PaymentError::Paused);
+        }
+        Ok(())
+    }
+
+    /// Admin-only. Writes an attestation that a payer -> merchant transfer
+    /// already happened, and returns the new payment id. Does not move funds.
+    /// The reconciler calls this only after verifying the transfer on Horizon.
+    /// Fails with `ZeroAmount` if `amount <= 0`, and `Paused` while paused.
     pub fn record_payment(
         env: Env,
         merchant: Address,
@@ -98,6 +122,9 @@ impl PaymentContract {
         Ok(id)
     }
 
+    /// Admin-only. Flags an existing payment as refunded. Bookkeeping only:
+    /// the refund transfer itself is not made by this contract. Fails with
+    /// `NotFound` for an unknown id and `AlreadyRefunded` if already flagged.
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
         require_admin(&env, &DataKey::Admin)?;
         require_not_paused(&env, &DataKey::Paused)?;
@@ -115,6 +142,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Read-only. Returns the stored record for `payment_id`, or `NotFound`.
     pub fn get_payment(env: Env, payment_id: u64) -> Result<PaymentRecord, PaymentError> {
         env.storage()
             .persistent()
@@ -122,11 +150,14 @@ impl PaymentContract {
             .ok_or(PaymentError::NotFound)
     }
 
+    /// Admin-only. Blocks `record_payment` and `mark_refunded` until unpaused.
+    /// Reads (`get_payment`) keep working while paused.
     pub fn pause(env: Env) -> Result<(), PaymentError> {
         set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
+    /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
         set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())

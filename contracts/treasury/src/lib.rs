@@ -63,6 +63,10 @@ pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
+    /// One-time setup. Stores the admin, the payout token, the signer set and
+    /// the approval threshold. Fails with `InvalidThreshold` unless
+    /// `1 <= threshold <= signers.len()`. The contract holds no funds until
+    /// it is funded separately; `execute_settlement` pays out of its balance.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -99,6 +103,19 @@ impl TreasuryContract {
         Ok(())
     }
 
+    fn require_admin(env: &Env) -> Result<(), TreasuryError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(TreasuryError::NotInitialized)?;
+        admin.require_auth();
+        Ok(())
+    }
+
+    /// Signer-only. Opens a new `Pending` settlement for `merchant` and returns
+    /// its id. The proposer's approval is counted immediately. Does not move
+    /// funds. Fails with `ZeroAmount` if `amount <= 0`.
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -125,6 +142,8 @@ impl TreasuryContract {
         Ok(id)
     }
 
+    /// Signer-only. Adds `signer`'s approval to a `Pending` settlement. Each
+    /// signer may approve a given settlement once (`AlreadyApproved`).
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         Self::require_signer(&env, &signer)?;
         require_not_paused(&env, &DataKey::Paused)?;
@@ -146,6 +165,11 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Permissionless once the approval count reaches the threshold; fails with
+    /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
+    /// from the treasury to the merchant, then marks the settlement `Executed`.
+    /// If the transfer traps, the whole call reverts and the settlement stays
+    /// `Pending`.
     pub fn execute_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
         require_not_paused(&env, &DataKey::Paused)?;
         let threshold: u32 = env
@@ -187,6 +211,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Read-only. Returns the stored settlement for `settlement_id`, or `NotFound`.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
@@ -194,11 +219,14 @@ impl TreasuryContract {
             .ok_or(TreasuryError::NotFound)
     }
 
+    /// Admin-only. Blocks `propose_settlement`, `approve_settlement` and
+    /// `execute_settlement` until unpaused. Reads keep working while paused.
     pub fn pause(env: Env) -> Result<(), TreasuryError> {
         set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
+    /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
         set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
         Ok(())
