@@ -69,6 +69,7 @@ impl PaymentContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::NextId, &1u64);
+        env.events().publish((symbol_short!("init"),), admin);
         Ok(())
     }
 
@@ -159,14 +160,22 @@ impl PaymentContract {
     /// Admin-only. Blocks `record_payment` and `mark_refunded` until unpaused.
     /// Reads (`get_payment`) keep working while paused.
     pub fn pause(env: Env) -> Result<(), PaymentError> {
-        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
     /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
-        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 }
 
