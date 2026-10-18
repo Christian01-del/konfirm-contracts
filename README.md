@@ -24,6 +24,8 @@ Every contract follows the same shape: an `initialize` entry point, a `pause`/`u
 
 Default-allow: an address is permitted unless explicitly blocked. `clear_address` restores the default rather than leaving an explicit "allowed" entry.
 
+**Advisory, not enforced on-chain.** `compliance` is consulted off-chain by `konfirm-backend` (`isAllowedOnChain`) before it calls `payment::record_payment` or proposes a `treasury` settlement. The `payment`, `treasury`, and `channel` contracts never call `compliance`, so a blocked address is not rejected by them. Treat `compliance` as the screening source of truth for the backend, not as a hard on-chain gate. Wiring it in as a gate would mean passing the compliance contract ID into `payment` and `treasury` at initialization and checking `is_allowed` in `record_payment`, `propose_settlement`, and `execute_settlement`.
+
 ### `payment`
 
 | Function | Signature |
@@ -139,7 +141,9 @@ contracts/
   payment/      payment attestation + refund tracking
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
-artifacts/      generated deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy)
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
+                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
 ```
 
 ## Known limitations
