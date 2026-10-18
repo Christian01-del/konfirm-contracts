@@ -25,6 +25,8 @@ Every contract follows the same shape: an `initialize` entry point, a `pause`/`u
 
 Default-allow: an address is permitted unless explicitly blocked. `clear_address` restores the default rather than leaving an explicit "allowed" entry.
 
+**Advisory, not enforced on-chain.** `compliance` is consulted off-chain by `konfirm-backend` (`isAllowedOnChain`) before it calls `payment::record_payment` or proposes a `treasury` settlement. The `payment`, `treasury`, and `channel` contracts never call `compliance`, so a blocked address is not rejected by them. Treat `compliance` as the screening source of truth for the backend, not as a hard on-chain gate. Wiring it in as a gate would mean passing the compliance contract ID into `payment` and `treasury` at initialization and checking `is_allowed` in `record_payment`, `propose_settlement`, and `execute_settlement`.
+
 ### `payment`
 
 | Function | Signature |
@@ -43,7 +45,7 @@ Default-allow: an address is permitted unless explicitly blocked. `clear_address
 | `initialize` | signer set + threshold |
 | `propose_settlement` | creates a pending settlement |
 | `approve_settlement` | `(signer: Address, settlement_id: u64)` — rejects non-signers and double-approval |
-| `execute_settlement` | `(settlement_id: u64)` — only once threshold is met; rejects double-execution |
+| `execute_settlement` | `(caller: Address, settlement_id: u64)` — caller must be a signer; only once threshold is met; rejects double-execution |
 | `get_settlement` | `(settlement_id: u64) -> Settlement` |
 | `pause` / `unpause` | `()` |
 
@@ -125,6 +127,15 @@ Each contract's `initialize` takes its own arguments: `compliance` and `payment`
 
 Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
 
+## Authorization convention
+
+Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
+
+- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
+- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
+
+If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
+
 ## Project structure
 
 ```
@@ -133,7 +144,9 @@ contracts/
   payment/      payment attestation + refund tracking
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
-artifacts/      generated deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy)
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
+                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
 ```
 
 ## Known limitations
