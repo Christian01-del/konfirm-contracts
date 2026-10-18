@@ -28,6 +28,7 @@ enum DataKey {
     Paused,
     NextId,
     Payment(u64),
+    ByTxHash(BytesN<32>),
 }
 
 #[contracterror]
@@ -41,6 +42,7 @@ pub enum PaymentError {
     NotFound = 5,
     InvalidAmount = 6,
     AlreadyRefunded = 7,
+    DuplicateTxHash = 8,
 }
 
 impl From<CommonError> for PaymentError {
@@ -105,6 +107,9 @@ impl PaymentContract {
         if amount <= 0 {
             return Err(PaymentError::InvalidAmount);
         }
+        if env.storage().persistent().has(&DataKey::ByTxHash(tx_hash.clone())) {
+            return Err(PaymentError::DuplicateTxHash);
+        }
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -114,10 +119,11 @@ impl PaymentContract {
             payer,
             link_id,
             amount,
-            tx_hash,
+            tx_hash: tx_hash.clone(),
             refunded: false,
         };
         env.storage().persistent().set(&DataKey::Payment(id), &record);
+        env.storage().persistent().set(&DataKey::ByTxHash(tx_hash), &id);
         env.events().publish((symbol_short!("recorded"), merchant), (id, link_id, amount));
         Ok(id)
     }
