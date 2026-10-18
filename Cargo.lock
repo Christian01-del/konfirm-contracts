@@ -984,6 +984,14 @@ name = "konfirm-channel"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "konfirm-common",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "konfirm-common"
+version = "0.1.0"
+dependencies = [
  "soroban-sdk",
 ]
 
@@ -991,6 +999,7 @@ dependencies = [
 name = "konfirm-compliance"
 version = "0.1.0"
 dependencies = [
+ "konfirm-common",
  "soroban-sdk",
 ]
 
@@ -998,6 +1007,7 @@ dependencies = [
 name = "konfirm-payment"
 version = "0.1.0"
 dependencies = [
+ "konfirm-common",
  "soroban-sdk",
 ]
 
@@ -1005,6 +1015,7 @@ dependencies = [
 name = "konfirm-treasury"
 version = "0.1.0"
 dependencies = [
+ "konfirm-common",
  "soroban-sdk",
 ]
 

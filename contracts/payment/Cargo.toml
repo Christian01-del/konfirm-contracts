@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
+konfirm-common = { path = "../common" }
 soroban-sdk = "27.0.5"
 
 [features]
