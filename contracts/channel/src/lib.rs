@@ -54,7 +54,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
-    OpenCount(Address),
+    AllowedToken(Address),
 }
 
 #[contracterror]
@@ -73,16 +73,7 @@ pub enum ChannelError {
     NotClosing = 10,
     Held = 11,
     ZeroDeposit = 12,
-    TooManyOpenChannels = 13,
-}
-
-impl From<CommonError> for ChannelError {
-    fn from(err: CommonError) -> Self {
-        match err {
-            CommonError::NotInitialized => ChannelError::NotInitialized,
-            CommonError::Paused => ChannelError::Paused,
-        }
-    }
+    TokenNotAllowed = 13,
 }
 
 #[contract]
@@ -101,6 +92,28 @@ impl ChannelContract {
         env.storage().instance().set(&DataKey::NextId, &1u64);
         env.events().publish((symbol_short!("init"),), admin);
         Ok(())
+    }
+
+    fn require_admin(env: &Env) -> Result<(), ChannelError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ChannelError::NotInitialized)?;
+        admin.require_auth();
+        Ok(())
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), ChannelError> {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(ChannelError::Paused);
+        }
+        Ok(())
+    }
+
+    fn is_token_allowed(env: &Env, token: &Address) -> bool {
+        env.storage().persistent().get(&DataKey::AllowedToken(token.clone())).unwrap_or(false)
     }
 
     fn get_channel(env: &Env, id: u64) -> Result<Channel, ChannelError> {
@@ -164,9 +177,8 @@ impl ChannelContract {
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
         }
-        let open_count = Self::get_open_count(&env, &payer);
-        if open_count >= MAX_OPEN_CHANNELS_PER_PAYER {
-            return Err(ChannelError::TooManyOpenChannels);
+        if !Self::is_token_allowed(&env, &token) {
+            return Err(ChannelError::TokenNotAllowed);
         }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
@@ -326,6 +338,15 @@ impl ChannelContract {
 
     pub fn get_channel_info(env: Env, channel_id: u64) -> Result<Channel, ChannelError> {
         Self::get_channel(&env, channel_id)
+    }
+
+    /// Admin-gated allowlist of token contracts that open_channel accepts.
+    /// Default-deny: a token is unusable until explicitly allowed here.
+    pub fn set_token_allowed(env: Env, token: Address, allowed: bool) -> Result<(), ChannelError> {
+        Self::require_admin(&env)?;
+        env.storage().persistent().set(&DataKey::AllowedToken(token.clone()), &allowed);
+        env.events().publish((symbol_short!("tokenok"),), (token, allowed));
+        Ok(())
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
