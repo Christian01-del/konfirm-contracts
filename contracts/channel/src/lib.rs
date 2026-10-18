@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes,
     BytesN, Env,
@@ -18,6 +19,11 @@ use soroban_sdk::{
 const DOMAIN_TAG: &[u8; 15] = b"KONFIRM_CHAN_V1";
 const TTL_THRESHOLD: u32 = 100;
 const TTL_EXTEND_TO: u32 = 5_000_000;
+
+// Cap on channels a single payer can have that aren't yet Closed. Each open
+// channel is persistent storage the operator pays to keep alive, so this
+// bounds how much any one account can make the protocol carry for free.
+const MAX_OPEN_CHANNELS_PER_PAYER: u32 = 20;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +56,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
+    OpenCount(Address),
 }
 
 #[contracterror]
@@ -68,6 +75,16 @@ pub enum ChannelError {
     NotClosing = 10,
     Held = 11,
     ZeroDeposit = 12,
+    TooManyOpenChannels = 13,
+}
+
+impl From<CommonError> for ChannelError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => ChannelError::NotInitialized,
+            CommonError::Paused => ChannelError::Paused,
+        }
+    }
 }
 
 #[contract]
@@ -87,24 +104,6 @@ impl ChannelContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), ChannelError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(ChannelError::NotInitialized)?;
-        admin.require_auth();
-        Ok(())
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), ChannelError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(ChannelError::Paused);
-        }
-        Ok(())
-    }
-
     fn get_channel(env: &Env, id: u64) -> Result<Channel, ChannelError> {
         env.storage()
             .persistent()
@@ -115,6 +114,19 @@ impl ChannelContract {
     fn save_channel(env: &Env, id: u64, ch: &Channel) {
         env.storage().persistent().set(&DataKey::Channel(id), ch);
         env.storage().persistent().extend_ttl(&DataKey::Channel(id), TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    fn save_open_count(env: &Env, payer: &Address, count: u32) {
+        let key = DataKey::OpenCount(payer.clone());
+        env.storage().persistent().set(&key, &count);
+        env.storage().persistent().extend_ttl(&key, 100, 5_000_000);
+    }
+
+    fn get_open_count(env: &Env, payer: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OpenCount(payer.clone()))
+            .unwrap_or(0)
     }
 
     /// The message a payer signs off-chain to authorize a cumulative amount.
@@ -138,9 +150,13 @@ impl ChannelContract {
     ) -> Result<u64, ChannelError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
+        }
+        let open_count = Self::get_open_count(&env, &payer);
+        if open_count >= MAX_OPEN_CHANNELS_PER_PAYER {
+            return Err(ChannelError::TooManyOpenChannels);
         }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
@@ -160,6 +176,7 @@ impl ChannelContract {
             closing_at: 0,
         };
         Self::save_channel(&env, id, &channel);
+        Self::save_open_count(&env, &payer, open_count + 1);
         env.events().publish((symbol_short!("opened"), payer, payee), (id, deposit));
         Ok(id)
     }
@@ -167,7 +184,7 @@ impl ChannelContract {
     pub fn top_up(env: Env, payer: Address, channel_id: u64, amount: i128) -> Result<(), ChannelError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         payer.require_auth();
-        Self::require_not_paused(&env)?;
+        require_not_paused(&env, &DataKey::Paused)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
         if ch.payer != payer {
             return Err(ChannelError::Unauthorized);
@@ -268,6 +285,8 @@ impl ChannelContract {
         ch.status = ChannelStatus::Closed;
         ch.deposited = ch.claimed;
         Self::save_channel(&env, channel_id, &ch);
+        let open_count = Self::get_open_count(&env, &ch.payer);
+        Self::save_open_count(&env, &ch.payer, open_count.saturating_sub(1));
         env.events().publish((symbol_short!("closed"),), channel_id);
         Ok(())
     }
@@ -413,6 +432,41 @@ mod test {
 
         client.initiate_close(&payer, &id);
         env.ledger().with_mut(|l| l.timestamp += 3_601);
+        client.finalize_close(&id);
+
+        let token_client = token::TokenClient::new(&env, &token_id);
+        assert_eq!(token_client.balance(&payer), 1_000_0000i128);
+        assert_eq!(token_client.balance(&contract_id), 0i128);
+    }
+
+    #[test]
+    fn finalize_close_succeeds_at_exact_challenge_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &3_600u64);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+
+        client.initiate_close(&payer, &id);
+
+        // One second short of the boundary still fails.
+        env.ledger().with_mut(|l| l.timestamp += 3_599);
+        let res = client.try_finalize_close(&id);
+        assert_eq!(res, Err(Ok(ChannelError::ChallengeNotElapsed)));
+
+        // timestamp == closing_at + period succeeds.
+        env.ledger().with_mut(|l| l.timestamp += 1);
         client.finalize_close(&id);
 
         let token_client = token::TokenClient::new(&env, &token_id);
@@ -636,5 +690,79 @@ mod test {
         let token_client = token::TokenClient::new(&env, &token_id);
         assert_eq!(token_client.balance(&contract_id), 700_0000i128);
         assert_eq!(token_client.balance(&payer), 1_000_0000i128 - 700_0000i128);
+    }
+
+    #[test]
+    fn release_hold_restores_open_and_resumes_checkpoint_and_top_up() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+
+        client.hold_channel(&id);
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Held);
+        assert_eq!(
+            client.try_top_up(&payer, &id, &100_0000i128),
+            Err(Ok(ChannelError::NotOpen))
+        );
+
+        client.release_hold(&id);
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+
+        client.top_up(&payer, &id, &100_0000i128);
+        assert_eq!(client.get_channel_info(&id).deposited, 600_0000i128);
+
+        let cumulative_amount: i128 = 100_0000;
+        let nonce: u64 = 1;
+        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
+        client.checkpoint(&id, &cumulative_amount, &nonce, &signature);
+
+        let ch = client.get_channel_info(&id);
+        assert_eq!(ch.claimed, cumulative_amount);
+        assert_eq!(token::TokenClient::new(&env, &token_id).balance(&payee), cumulative_amount);
+    }
+
+    #[test]
+    fn release_hold_rejects_non_held_channel() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = setup_token(&env, &token_admin);
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        let payer = Address::generate(&env);
+        let payee = Address::generate(&env);
+        token_admin_client.mint(&payer, &1_000_0000i128);
+
+        let contract_id = env.register(ChannelContract, ());
+        let client = ChannelContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &86_400u64);
+        let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+
+        // Open channel: nothing to release.
+        assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Open);
+
+        // Closing channel: also not Held.
+        client.initiate_close(&payer, &id);
+        assert_eq!(client.try_release_hold(&id), Err(Ok(ChannelError::NotOpen)));
+        assert_eq!(client.get_channel_info(&id).status, ChannelStatus::Closing);
     }
 }

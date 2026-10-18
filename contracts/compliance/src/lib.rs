@@ -1,5 +1,6 @@
 #![no_std]
 
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
 
 const TTL_THRESHOLD: u32 = 100;
@@ -10,8 +11,16 @@ const TTL_EXTEND_TO: u32 = 5_000_000;
 enum DataKey {
     Admin,
     Paused,
-    Blocked(Address),
-    Allowed(Address),
+    Status(Address),
+}
+
+// An address is either blocked, explicitly cleared (audit record), or has no
+// record at all. The last state is represented by the absence of the key.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComplianceStatus {
+    Blocked,
+    Cleared,
 }
 
 #[contracterror]
@@ -22,6 +31,15 @@ pub enum ComplianceError {
     NotInitialized = 2,
     Unauthorized = 3,
     Paused = 4,
+}
+
+impl From<CommonError> for ComplianceError {
+    fn from(err: CommonError) -> Self {
+        match err {
+            CommonError::NotInitialized => ComplianceError::NotInitialized,
+            CommonError::Paused => ComplianceError::Paused,
+        }
+    }
 }
 
 #[contract]
@@ -41,24 +59,6 @@ impl ComplianceContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events().publish((symbol_short!("init"),), admin);
-        Ok(())
-    }
-
-    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(ComplianceError::NotInitialized)?;
-        admin.require_auth();
-        Ok(admin)
-    }
-
-    fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        if paused {
-            return Err(ComplianceError::Paused);
-        }
         Ok(())
     }
 
@@ -105,8 +105,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
-        env.storage().persistent().remove(&DataKey::Allowed(addr.clone()));
+        env.storage().persistent().remove(&DataKey::Status(addr.clone()));
         env.events().publish((symbol_short!("cleared"),), addr);
         Ok(())
     }
@@ -129,7 +128,8 @@ impl ComplianceContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
 
     fn setup(env: &Env) -> (ComplianceContractClient<'_>, Address) {
         let admin = Address::generate(env);
@@ -189,6 +189,10 @@ mod test {
         client.pause();
         let res = client.try_block_address(&addr);
         assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_allow_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
+        let res = client.try_clear_address(&addr);
+        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
     }
 
     #[test]
@@ -198,5 +202,28 @@ mod test {
         let (client, admin) = setup(&env);
         let res = client.try_initialize(&admin);
         assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
+    }
+
+    #[test]
+    fn non_admin_signer_cannot_call_admin_function() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let non_admin = Address::generate(&env);
+        let addr = Address::generate(&env);
+
+        // Only a non-admin address authorizes the call; the admin's
+        // require_auth() must therefore fail.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "block_address",
+                args: (addr.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_block_address(&addr).is_err());
+        assert!(client.is_allowed(&addr));
     }
 }
