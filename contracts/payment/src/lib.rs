@@ -209,8 +209,11 @@ mod test {
         let payer = Address::generate(&env);
         let tx_hash = BytesN::from_array(&env, &[2u8; 32]);
 
+        let id = client.record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
         client.pause();
-        let res = client.try_record_payment(&merchant, &payer, &1u64, &100_0000i128, &tx_hash);
+        let res = client.try_record_payment(&merchant, &payer, &2u64, &100_0000i128, &tx_hash);
+        assert_eq!(res, Err(Ok(PaymentError::Paused)));
+        let res = client.try_mark_refunded(&id);
         assert_eq!(res, Err(Ok(PaymentError::Paused)));
     }
 }
