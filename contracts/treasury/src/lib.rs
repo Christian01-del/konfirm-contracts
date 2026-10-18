@@ -43,6 +43,7 @@ enum DataKey {
 pub enum TreasuryError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
+    /// Never returned: admin/signer gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
     NotFound = 5,
@@ -52,6 +53,7 @@ pub enum TreasuryError {
     ThresholdNotMet = 9,
     NotPending = 10,
     InvalidThreshold = 11,
+    DuplicateSigner = 12,
 }
 
 impl From<CommonError> for TreasuryError {
@@ -85,6 +87,11 @@ impl TreasuryContract {
         if threshold == 0 || threshold > signers.len() {
             return Err(TreasuryError::InvalidThreshold);
         }
+        for (i, signer) in signers.iter().enumerate() {
+            if signers.iter().skip(i + 1).any(|other| other == signer) {
+                return Err(TreasuryError::DuplicateSigner);
+            }
+        }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
@@ -92,6 +99,7 @@ impl TreasuryContract {
         env.storage().instance().set(&DataKey::Signers, &signers);
         env.storage().instance().set(&DataKey::Threshold, &threshold);
         env.storage().instance().set(&DataKey::NextId, &1u64);
+        env.events().publish((symbol_short!("init"),), admin);
         Ok(())
     }
 
@@ -224,7 +232,7 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Read-only. Returns the stored settlement for `settlement_id`, or `NotFound`.
+    /// Permissionless. Read-only.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
@@ -247,6 +255,10 @@ impl TreasuryContract {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 }
 
@@ -287,7 +299,7 @@ mod test {
         let merchant = Address::generate(&env);
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
-        let res = client.try_execute_settlement(&id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert_eq!(res, Err(Ok(TreasuryError::ThresholdNotMet)));
     }
 
@@ -300,7 +312,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
         let settlement = client.get_settlement(&id);
         assert_eq!(settlement.status, SettlementStatus::Executed);
     }
@@ -339,8 +351,8 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
-        let res = client.try_execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert_eq!(res, Err(Ok(TreasuryError::NotPending)));
     }
 
@@ -384,7 +396,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        client.execute_settlement(&id);
+        client.execute_settlement(&signers.get(0).unwrap(), &id);
 
         // The actual gap this whole fix closes: before it, execute_settlement
         // only flipped a status flag and neither balance below would have
@@ -418,7 +430,7 @@ mod test {
 
         let id = client.propose_settlement(&signers.get(0).unwrap(), &merchant, &1_000_0000i128);
         client.approve_settlement(&signers.get(1).unwrap(), &id);
-        let res = client.try_execute_settlement(&id);
+        let res = client.try_execute_settlement(&signers.get(0).unwrap(), &id);
         assert!(res.is_err(), "an underfunded transfer should trap, not silently succeed");
 
         let settlement = client.get_settlement(&id);

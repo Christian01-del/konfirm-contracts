@@ -41,6 +41,7 @@ pub struct Channel {
     pub payee: Address,
     pub token: Address,
     pub payer_pubkey: BytesN<32>,
+    pub delegated_closer: Option<Address>,
     pub deposited: i128,
     pub claimed: i128,
     pub nonce: u64,
@@ -56,7 +57,7 @@ enum DataKey {
     ChallengePeriod,
     NextId,
     Channel(u64),
-    OpenCount(Address),
+    HeldFrom(u64),
 }
 
 #[contracterror]
@@ -75,16 +76,7 @@ pub enum ChannelError {
     NotClosing = 10,
     Held = 11,
     ZeroDeposit = 12,
-    TooManyOpenChannels = 13,
-}
-
-impl From<CommonError> for ChannelError {
-    fn from(err: CommonError) -> Self {
-        match err {
-            CommonError::NotInitialized => ChannelError::NotInitialized,
-            CommonError::Paused => ChannelError::Paused,
-        }
-    }
+    TokenNotAllowed = 13,
 }
 
 #[contract]
@@ -101,7 +93,30 @@ impl ChannelContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::ChallengePeriod, &challenge_period_secs);
         env.storage().instance().set(&DataKey::NextId, &1u64);
+        env.events().publish((symbol_short!("init"),), admin);
         Ok(())
+    }
+
+    fn require_admin(env: &Env) -> Result<(), ChannelError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ChannelError::NotInitialized)?;
+        admin.require_auth();
+        Ok(())
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), ChannelError> {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(ChannelError::Paused);
+        }
+        Ok(())
+    }
+
+    fn is_token_allowed(env: &Env, token: &Address) -> bool {
+        env.storage().persistent().get(&DataKey::AllowedToken(token.clone())).unwrap_or(false)
     }
 
     fn get_channel(env: &Env, id: u64) -> Result<Channel, ChannelError> {
@@ -132,8 +147,20 @@ impl ChannelContract {
     /// The message a payer signs off-chain to authorize a cumulative amount.
     /// Fixed-width, domain-tagged encoding — never string concatenation,
     /// which is how signatures end up ambiguous across field boundaries.
-    fn claim_payload(env: &Env, channel_id: u64, nonce: u64, cumulative_amount: i128) -> Bytes {
+    /// The contract's own address (a 56-char strkey) binds the signature to
+    /// this deployment: contract IDs derive from the network, deployer and
+    /// salt, so identical code deployed elsewhere yields a different ID.
+    fn claim_payload(
+        env: &Env,
+        contract: &Address,
+        channel_id: u64,
+        nonce: u64,
+        cumulative_amount: i128,
+    ) -> Bytes {
+        let mut contract_strkey = [0u8; 56];
+        contract.to_string().copy_into_slice(&mut contract_strkey);
         let mut payload = Bytes::from_array(env, DOMAIN_TAG);
+        payload.append(&Bytes::from_array(env, &contract_strkey));
         payload.append(&Bytes::from_array(env, &channel_id.to_be_bytes()));
         payload.append(&Bytes::from_array(env, &nonce.to_be_bytes()));
         payload.append(&Bytes::from_array(env, &cumulative_amount.to_be_bytes()));
@@ -147,6 +174,7 @@ impl ChannelContract {
         token: Address,
         payer_pubkey: BytesN<32>,
         deposit: i128,
+        delegated_closer: Option<Address>,
     ) -> Result<u64, ChannelError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         payer.require_auth();
@@ -154,9 +182,8 @@ impl ChannelContract {
         if deposit <= 0 {
             return Err(ChannelError::ZeroDeposit);
         }
-        let open_count = Self::get_open_count(&env, &payer);
-        if open_count >= MAX_OPEN_CHANNELS_PER_PAYER {
-            return Err(ChannelError::TooManyOpenChannels);
+        if !Self::is_token_allowed(&env, &token) {
+            return Err(ChannelError::TokenNotAllowed);
         }
 
         token::TokenClient::new(&env, &token).transfer(&payer, env.current_contract_address(), &deposit);
@@ -169,6 +196,7 @@ impl ChannelContract {
             payee: payee.clone(),
             token,
             payer_pubkey,
+            delegated_closer,
             deposited: deposit,
             claimed: 0,
             nonce: 0,
@@ -202,7 +230,7 @@ impl ChannelContract {
         Ok(())
     }
 
-    /// Never pausable. See module docs.
+    /// Permissionless — authorized by the payer's signature, not an address. Never pausable. See module docs.
     pub fn checkpoint(
         env: Env,
         channel_id: u64,
@@ -225,7 +253,13 @@ impl ChannelContract {
             return Err(ChannelError::ExceedsDeposit);
         }
 
-        let payload = Self::claim_payload(&env, channel_id, nonce, cumulative_amount);
+        let payload = Self::claim_payload(
+            &env,
+            &env.current_contract_address(),
+            channel_id,
+            nonce,
+            cumulative_amount,
+        );
         // Traps the whole invocation on a bad signature rather than returning
         // an error value — a real property of the host function, not a choice
         // this contract makes.
@@ -245,7 +279,10 @@ impl ChannelContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         caller.require_auth();
         let mut ch = Self::get_channel(&env, channel_id)?;
-        if caller != ch.payer && caller != ch.payee {
+        // The delegated closer lets a third party (e.g. the facilitator) start
+        // the challenge window on an idle channel where neither party will.
+        // It can only start a close — funds still go to the payer on finalize.
+        if caller != ch.payer && caller != ch.payee && ch.delegated_closer.as_ref() != Some(&caller) {
             return Err(ChannelError::Unauthorized);
         }
         if ch.status != ChannelStatus::Open {
@@ -291,10 +328,17 @@ impl ChannelContract {
         Ok(())
     }
 
+    /// Only Open or Closing channels can be held. Closing is included so an
+    /// admin can freeze a suspect exit; release_hold restores whichever of the
+    /// two it was in, so a unilateral exit is never silently reopened.
     pub fn hold_channel(env: Env, channel_id: u64) -> Result<(), ChannelError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         let mut ch = Self::get_channel(&env, channel_id)?;
+        if ch.status != ChannelStatus::Open && ch.status != ChannelStatus::Closing {
+            return Err(ChannelError::NotOpen);
+        }
+        env.storage().persistent().set(&DataKey::HeldFrom(channel_id), &ch.status);
         ch.status = ChannelStatus::Held;
         Self::save_channel(&env, channel_id, &ch);
         env.events().publish((symbol_short!("held"),), channel_id);
@@ -308,14 +352,47 @@ impl ChannelContract {
         if ch.status != ChannelStatus::Held {
             return Err(ChannelError::NotOpen);
         }
-        ch.status = ChannelStatus::Open;
+        let prior: ChannelStatus = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HeldFrom(channel_id))
+            .ok_or(ChannelError::NotOpen)?;
+        env.storage().persistent().remove(&DataKey::HeldFrom(channel_id));
+        ch.status = prior;
         Self::save_channel(&env, channel_id, &ch);
         env.events().publish((symbol_short!("release"),), channel_id);
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn get_channel_info(env: Env, channel_id: u64) -> Result<Channel, ChannelError> {
         Self::get_channel(&env, channel_id)
+    }
+
+    /// Rotates the admin key. Requires auth from both the current admin and
+    /// the incoming one, so a handoff can't strand the contract on an address
+    /// nobody holds. Deliberately not pause-gated: rotating away from a
+    /// suspected key must still work during an incident. Has no effect on
+    /// checkpoint(), which is permissionless and never admin-gated.
+    ///
+    /// This does NOT defend against a leaked current key on its own — that key
+    /// can still rotate to an attacker-held address. Quorum-based control
+    /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
+    /// that gap; see docs/KEYS.md.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ChannelError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ChannelError::NotInitialized)?;
+        if current_admin != admin {
+            return Err(ChannelError::Unauthorized);
+        }
+        current_admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish((symbol_short!("admin"),), new_admin);
+        Ok(())
     }
 
     pub fn pause(env: Env) -> Result<(), ChannelError> {
@@ -331,6 +408,10 @@ impl ChannelContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
     }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -345,13 +426,13 @@ mod test {
         sac.address()
     }
 
-    // claim_payload's exact length: 15-byte domain tag + 8-byte channel_id
-    // + 8-byte nonce + 16-byte cumulative_amount. Bytes::to_alloc_vec()
-    // would be simpler but needs soroban-sdk's `alloc` feature, which isn't
-    // enabled here — copy_into_slice into a fixed buffer needs no new
-    // feature and the length is fixed anyway.
-    fn payload_bytes(payload: &Bytes) -> [u8; 47] {
-        let mut buf = [0u8; 47];
+    // claim_payload's exact length: 15-byte domain tag + 56-byte contract
+    // strkey + 8-byte channel_id + 8-byte nonce + 16-byte cumulative_amount.
+    // Bytes::to_alloc_vec() would be simpler but needs soroban-sdk's `alloc`
+    // feature, which isn't enabled here — copy_into_slice into a fixed buffer
+    // needs no new feature and the length is fixed anyway.
+    fn payload_bytes(payload: &Bytes) -> [u8; 103] {
+        let mut buf = [0u8; 103];
         payload.copy_into_slice(&mut buf);
         buf
     }
@@ -377,7 +458,7 @@ mod test {
         // test harness here only exercises the accounting and TTL logic, not
         // signature generation (that lives in the reconciler/client SDK).
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let ch = client.get_channel_info(&id);
         assert_eq!(ch.deposited, 500_0000i128);
@@ -404,7 +485,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.initiate_close(&payer, &id);
         let res = client.try_finalize_close(&id);
@@ -428,7 +509,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &3_600u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.initiate_close(&payer, &id);
         env.ledger().with_mut(|l| l.timestamp += 3_601);
@@ -492,7 +573,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let bogus_sig = BytesN::from_array(&env, &[0u8; 64]);
         let res = client.try_checkpoint(&id, &0i128, &0u64, &bogus_sig);
@@ -516,7 +597,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.hold_channel(&id);
         let bogus_sig = BytesN::from_array(&env, &[0u8; 64]);
@@ -548,7 +629,7 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let cumulative_amount: i128 = 100_0000;
         let nonce: u64 = 1;
@@ -556,7 +637,7 @@ mod test {
         // reimplemented — a test that built its own byte layout could pass
         // for the wrong reason if it silently drifted from what
         // checkpoint() actually verifies.
-        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, cumulative_amount);
         let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
 
         client.checkpoint(&id, &cumulative_amount, &nonce, &signature);
@@ -594,10 +675,10 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         let sign_claim = |nonce: u64, amount: i128| -> BytesN<64> {
-            let payload = ChannelContract::claim_payload(&env, id, nonce, amount);
+            let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, amount);
             BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes())
         };
 
@@ -649,14 +730,14 @@ mod test {
 
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let payer_pubkey = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         // A validly-signed claim for more than was ever deposited — must be
         // rejected on the deposit check, not accepted just because the
         // signature is genuine.
         let cumulative_amount: i128 = 600_0000;
         let nonce: u64 = 1;
-        let payload = ChannelContract::claim_payload(&env, id, nonce, cumulative_amount);
+        let payload = ChannelContract::claim_payload(&env, &contract_id, id, nonce, cumulative_amount);
         let signature = BytesN::from_array(&env, &signing_key.sign(&payload_bytes(&payload)).to_bytes());
 
         let res = client.try_checkpoint(&id, &cumulative_amount, &nonce, &signature);
@@ -680,7 +761,7 @@ mod test {
         let client = ChannelContractClient::new(&env, &contract_id);
         client.initialize(&admin, &86_400u64);
         let payer_pubkey = BytesN::from_array(&env, &[9u8; 32]);
-        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128);
+        let id = client.open_channel(&payer, &payee, &token_id, &payer_pubkey, &500_0000i128, &None);
 
         client.top_up(&payer, &id, &200_0000i128);
 

@@ -31,7 +31,7 @@ enum DataKey {
     Paused,
     NextId,
     Payment(u64),
-    ByTxHash(BytesN<32>),
+    Voided(u64),
 }
 
 #[contracterror]
@@ -40,21 +40,14 @@ enum DataKey {
 pub enum PaymentError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
+    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
     NotFound = 5,
     InvalidAmount = 6,
     AlreadyRefunded = 7,
-    DuplicateTxHash = 8,
-}
-
-impl From<CommonError> for PaymentError {
-    fn from(err: CommonError) -> Self {
-        match err {
-            CommonError::NotInitialized => PaymentError::NotInitialized,
-            CommonError::Paused => PaymentError::Paused,
-        }
-    }
+    AlreadyVoided = 8,
+    Voided = 9,
 }
 
 #[contract]
@@ -72,6 +65,7 @@ impl PaymentContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::NextId, &1u64);
+        env.events().publish((symbol_short!("init"),), admin);
         Ok(())
     }
 
@@ -147,6 +141,9 @@ impl PaymentContract {
         if record.refunded {
             return Err(PaymentError::AlreadyRefunded);
         }
+        if Self::is_voided_flag(&env, payment_id) {
+            return Err(PaymentError::Voided);
+        }
         record.refunded = true;
         env.storage().persistent().set(&DataKey::Payment(payment_id), &record);
         env.storage().persistent().extend_ttl(&DataKey::Payment(payment_id), TTL_THRESHOLD, TTL_EXTEND_TO);
@@ -154,7 +151,39 @@ impl PaymentContract {
         Ok(())
     }
 
-    /// Read-only. Returns the stored record for `payment_id`, or `NotFound`.
+    // Marks a record as mis-recorded: no money moved, so nothing is reversed on
+    // the ledger. The record itself is never rewritten; the voided flag sits
+    // alongside it and consumers must check is_voided before trusting it.
+    pub fn void_payment(env: Env, payment_id: u64) -> Result<(), PaymentError> {
+        Self::require_admin(&env)?;
+        Self::require_not_paused(&env)?;
+        let record: PaymentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Payment(payment_id))
+            .ok_or(PaymentError::NotFound)?;
+        if Self::is_voided_flag(&env, payment_id) {
+            return Err(PaymentError::AlreadyVoided);
+        }
+        if record.refunded {
+            return Err(PaymentError::AlreadyRefunded);
+        }
+        env.storage().persistent().set(&DataKey::Voided(payment_id), &true);
+        env.events().publish((symbol_short!("voided"),), payment_id);
+        Ok(())
+    }
+
+    fn is_voided_flag(env: &Env, payment_id: u64) -> bool {
+        env.storage().persistent().get(&DataKey::Voided(payment_id)).unwrap_or(false)
+    }
+
+    pub fn is_voided(env: Env, payment_id: u64) -> Result<bool, PaymentError> {
+        if !env.storage().persistent().has(&DataKey::Payment(payment_id)) {
+            return Err(PaymentError::NotFound);
+        }
+        Ok(Self::is_voided_flag(&env, payment_id))
+    }
+
     pub fn get_payment(env: Env, payment_id: u64) -> Result<PaymentRecord, PaymentError> {
         env.storage()
             .persistent()
@@ -162,8 +191,31 @@ impl PaymentContract {
             .ok_or(PaymentError::NotFound)
     }
 
-    /// Admin-only. Blocks `record_payment` and `mark_refunded` until unpaused.
-    /// Reads (`get_payment`) keep working while paused.
+    /// Rotates the admin key. Requires auth from both the current admin and
+    /// the incoming one, so a handoff can't strand the contract on an address
+    /// nobody holds. Deliberately not pause-gated: rotating away from a
+    /// suspected key must still work during an incident.
+    ///
+    /// This does NOT defend against a leaked current key on its own — that key
+    /// can still rotate to an attacker-held address. Quorum-based control
+    /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
+    /// that gap; see docs/KEYS.md.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), PaymentError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(PaymentError::NotInitialized)?;
+        if current_admin != admin {
+            return Err(PaymentError::Unauthorized);
+        }
+        current_admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish((symbol_short!("admin"),), new_admin);
+        Ok(())
+    }
+
     pub fn pause(env: Env) -> Result<(), PaymentError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -173,10 +225,14 @@ impl PaymentContract {
 
     /// Admin-only. Lifts a pause set by `pause`.
     pub fn unpause(env: Env) -> Result<(), PaymentError> {
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 }
 

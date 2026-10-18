@@ -29,6 +29,7 @@ enum ComplianceStatus {
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
+    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -62,7 +63,25 @@ impl ComplianceContract {
         Ok(())
     }
 
-    /// Read-only, and deliberately callable even while paused — pausing the
+    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ComplianceError::NotInitialized)?;
+        admin.require_auth();
+        Ok(admin)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(ComplianceError::Paused);
+        }
+        Ok(())
+    }
+
+    /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {
@@ -110,6 +129,31 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Rotates the admin key. Requires auth from both the current admin and
+    /// the incoming one, so a handoff can't strand the contract on an address
+    /// nobody holds. Deliberately not pause-gated: rotating away from a
+    /// suspected key must still work during an incident.
+    ///
+    /// This does NOT defend against a leaked current key on its own — that key
+    /// can still rotate to an attacker-held address. Quorum-based control
+    /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
+    /// that gap; see docs/KEYS.md.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ComplianceError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ComplianceError::NotInitialized)?;
+        if current_admin != admin {
+            return Err(ComplianceError::Unauthorized);
+        }
+        current_admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish((symbol_short!("admin"),), new_admin);
+        Ok(())
+    }
+
     pub fn pause(env: Env) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -122,6 +166,10 @@ impl ComplianceContract {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 }
 
