@@ -85,8 +85,8 @@ impl ComplianceContract {
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
     pub fn is_allowed(env: Env, addr: Address) -> bool {
-        let key = DataKey::Blocked(addr);
-        if env.storage().persistent().has(&key) {
+        let key = DataKey::Status(addr);
+        if env.storage().persistent().get(&key) == Some(ComplianceStatus::Blocked) {
             // Keeps a live block from archiving, which would silently flip the
             // address back to "allowed" without anyone clearing it.
             env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
@@ -99,10 +99,9 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().set(&DataKey::Blocked(addr.clone()), &true);
-        env.storage().persistent().extend_ttl(&DataKey::Blocked(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &false);
-        env.storage().persistent().extend_ttl(&DataKey::Allowed(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
+        let key = DataKey::Status(addr.clone());
+        env.storage().persistent().set(&key, &ComplianceStatus::Blocked);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("blocked"),), addr);
         Ok(())
     }
@@ -113,9 +112,9 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        env.storage().persistent().remove(&DataKey::Blocked(addr.clone()));
-        env.storage().persistent().set(&DataKey::Allowed(addr.clone()), &true);
-        env.storage().persistent().extend_ttl(&DataKey::Allowed(addr.clone()), TTL_THRESHOLD, TTL_EXTEND_TO);
+        let key = DataKey::Status(addr.clone());
+        env.storage().persistent().set(&key, &ComplianceStatus::Cleared);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         env.events().publish((symbol_short!("allowed"),), addr);
         Ok(())
     }
@@ -168,6 +167,7 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Permissionless. Read-only.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
