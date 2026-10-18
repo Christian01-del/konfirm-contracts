@@ -70,10 +70,14 @@ pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
-    /// One-time setup. Stores the admin, the payout token, the signer set and
-    /// the approval threshold. Fails with `InvalidThreshold` unless
-    /// `1 <= threshold <= signers.len()`. The contract holds no funds until
-    /// it is funded separately; `execute_settlement` pays out of its balance.
+    /// One-time setup. Requires the admin's auth; not pause-gated. Stores the
+    /// admin, the payout token, the signer set and the approval threshold —
+    /// the number of distinct signer approvals a settlement needs before it
+    /// can execute. Fails with `AlreadyInitialized` on a second call,
+    /// `InvalidThreshold` unless `1 <= threshold <= signers.len()`, and
+    /// `DuplicateSigner` if an address appears twice in `signers`. The
+    /// contract holds no funds until it is funded separately;
+    /// `execute_settlement` pays out of its balance.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -103,6 +107,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    // Requires `who`'s auth and that `who` is in the signer set (`NotSigner`).
     fn require_signer(env: &Env, who: &Address) -> Result<(), TreasuryError> {
         who.require_auth();
         let signers: Vec<Address> = env
@@ -116,6 +121,7 @@ impl TreasuryContract {
         Ok(())
     }
 
+    // Requires the stored admin's auth; `NotInitialized` before `initialize`.
     fn require_admin(env: &Env) -> Result<(), TreasuryError> {
         let admin: Address = env
             .storage()
@@ -126,9 +132,11 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Signer-only. Opens a new `Pending` settlement for `merchant` and returns
-    /// its id. The proposer's approval is counted immediately. Does not move
-    /// funds. Fails with `ZeroAmount` if `amount <= 0`.
+    /// Signer-only, pause-gated. Opens a new `Pending` settlement paying
+    /// `amount` to `merchant` and returns its id. The proposer's approval
+    /// counts as the first of the `threshold` required. Does not move funds.
+    /// Fails with `NotSigner`, `ZeroAmount` if `amount <= 0`, and `Paused`
+    /// while paused.
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -158,8 +166,12 @@ impl TreasuryContract {
         Ok(id)
     }
 
-    /// Signer-only. Adds `signer`'s approval to a `Pending` settlement. Each
-    /// signer may approve a given settlement once (`AlreadyApproved`).
+    /// Signer-only, pause-gated. Adds `signer`'s approval to a `Pending`
+    /// settlement. Each signer may approve a given settlement once
+    /// (`AlreadyApproved`), so the approval count is the number of distinct
+    /// signers. Reaching the threshold does not execute the settlement; that
+    /// takes a separate `execute_settlement` call. Fails with `NotSigner`,
+    /// `NotFound`, `NotPending`, and `Paused` while paused.
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &signer)?;
@@ -184,11 +196,13 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Signer-only, once the approval count reaches the threshold; fails with
-    /// `ThresholdNotMet` before then. Transfers `amount` of the payout token
-    /// from the treasury to the merchant, then marks the settlement `Executed`.
-    /// If the transfer traps, the whole call reverts and the settlement stays
-    /// `Pending`.
+    /// Signer-only, pause-gated. Any one signer (`caller`) can execute once the
+    /// settlement's approval count reaches the threshold; fails with
+    /// `ThresholdNotMet` before then. Executing does not count as an approval.
+    /// Transfers `amount` of the payout token from the treasury to the
+    /// merchant, then marks the settlement `Executed`. If the transfer traps,
+    /// the whole call reverts and the settlement stays `Pending`. Also fails
+    /// with `NotSigner`, `NotFound`, `NotPending`, and `Paused` while paused.
     pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &caller)?;
@@ -233,7 +247,8 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Permissionless. Read-only.
+    /// Permissionless. Read-only and not pause-gated. Returns the settlement,
+    /// or `NotFound` for an unknown id.
     pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
         env.storage()
             .persistent()
@@ -250,7 +265,7 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Admin-only. Lifts a pause set by `pause`.
+    /// Admin-only. Lifts a pause set by `pause`. Callable while paused.
     pub fn unpause(env: Env) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -258,7 +273,7 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Permissionless. Read-only.
+    /// Permissionless. Read-only. Returns whether the contract is paused.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
