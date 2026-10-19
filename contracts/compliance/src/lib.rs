@@ -84,7 +84,13 @@ impl ComplianceContract {
     /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
+    ///
+    /// Fails closed on a contract that was never initialized: with no admin set, screening
+    /// is not running, so nothing is cleared (unlike the paused case, which still screens).
     pub fn is_allowed(env: Env, addr: Address) -> bool {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return false;
+        }
         let key = DataKey::Status(addr);
         if env.storage().persistent().get(&key) == Some(ComplianceStatus::Blocked) {
             // Keeps a live block from archiving, which would silently flip the
@@ -197,6 +203,19 @@ mod test {
         assert!(client.is_allowed(&addr));
         client.block_address(&addr);
         assert!(!client.is_allowed(&addr));
+    }
+
+    #[test]
+    fn is_allowed_fails_closed_when_uninitialized() {
+        let env = Env::default();
+        let contract_id = env.register(ComplianceContract, ());
+        let client = ComplianceContractClient::new(&env, &contract_id);
+        let addr = Address::generate(&env);
+        assert!(!client.is_allowed(&addr));
+
+        // An initialized contract with no blocks still allows the same address.
+        let (initialized, _admin) = setup(&env);
+        assert!(initialized.is_allowed(&addr));
     }
 
     #[test]
