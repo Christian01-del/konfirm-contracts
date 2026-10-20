@@ -47,13 +47,14 @@ the current contracts returns it.
 | 3 | `Unauthorized` | `top_up` by someone other than the channel's payer, or `initiate_close` by someone other than the payer or payee. |
 | 4 | `Paused` | `open_channel` or `top_up` while paused. `checkpoint`, `initiate_close` and `finalize_close` are never blocked by pause. |
 | 5 | `NotFound` | Any call with a channel id that does not exist. |
-| 6 | `NotOpen` | `top_up` or `initiate_close` on a channel that is not `Open`; `checkpoint` on a `Closed` channel; `release_hold` on a channel that is not `Held`. |
+| 6 | `NotOpen` | `top_up` or `initiate_close` on a channel that is not `Open`; `checkpoint` on a `Closed` channel. |
 | 7 | `StaleClaim` | `checkpoint` with a `nonce` not greater than the stored one, or a `cumulative_amount` not greater than what was already claimed. |
 | 8 | `ExceedsDeposit` | `checkpoint` with a `cumulative_amount` greater than the channel's deposit. |
 | 9 | `ChallengeNotElapsed` | `finalize_close` before `closing_at + challenge period`. |
 | 10 | `NotClosing` | `finalize_close` on a channel that is not `Closing`. |
 | 11 | `Held` | `checkpoint` on a channel that is `Held` by admin. |
 | 12 | `ZeroDeposit` | `open_channel` or `top_up` with an amount `<= 0`. |
+| 13 | `NotHeld` | `release_hold` on a channel that is not `Held` (e.g. `Open`, `Closing` or `Closed`). |
 
 An invalid payer signature in `checkpoint` traps the invocation (the Ed25519
 check is a host function) and does not return a code.
