@@ -1,6 +1,6 @@
 # Architecture
 
-Four Soroban contracts, one Cargo workspace. Each contract is an independent deployment with its own address and its own `initialize` call. The contracts do not call each other: there are no cross-contract invocations in this repo. The only external calls are to a SEP-41 token contract (`treasury` and `channel`). Anything that connects the four (for example, checking `compliance` before recording a `payment`) happens in the off-chain caller, `konfirm-backend`, not on-chain.
+Four Soroban contracts plus a shared helper crate, one Cargo workspace. Each contract is an independent deployment with its own address and its own `initialize` call. The contracts do not call each other: there are no cross-contract invocations in this repo. The only external calls are to a SEP-41 token contract (`treasury` and `channel`). Anything that connects the four (for example, checking `compliance` before recording a `payment`) happens in the off-chain caller, `konfirm-backend`, not on-chain.
 
 ## The four contracts
 
@@ -12,6 +12,16 @@ Four Soroban contracts, one Cargo workspace. Each contract is an independent dep
 | [`channel`](../contracts/channel/src/lib.rs) | Yes | Payer opens and tops up; payer or payee starts a close; admin holds and releases; anyone finalizes a close after the challenge period | Escrow-backed off-chain payment channels. The payer locks funds on open. The payee is paid by submitting signed cumulative checkpoints. A close starts a challenge period, and anyone can finalize it once that period has elapsed, refunding the unclaimed remainder to the payer. |
 
 Each contract also has an `initialize` entry point (one-shot, rejects a second call) and a `pause` / `unpause` pair. Pausing blocks mutations. `is_allowed` (compliance) and `checkpoint` (channel) are documented exceptions to the pause rule. See `CONTRIBUTING.md` for the authorization convention.
+
+## The shared helper crate
+
+[`contracts/common`](../contracts/common/src/lib.rs) (`konfirm-common`) is a library crate, not a deployable contract. It centralizes the admin and pause plumbing that all four contracts share:
+
+- `require_admin` — checks the stored admin and rejects unauthorized callers.
+- `require_not_paused` — rejects mutations while the contract is paused.
+- `set_paused` — flips the stored pause flag.
+
+Error types still differ per contract. `konfirm-common` defines its own `CommonError`, and each contract maps it into its own error enum via `From<CommonError>`. That keeps each contract's public error surface stable and self-describing while sharing the implementation of the checks.
 
 ## How they relate
 
