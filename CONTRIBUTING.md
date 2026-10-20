@@ -64,3 +64,18 @@ Fixing these is a documentation change. If you touch one of these functions, bri
 - Keep changes focused on one contract or one concern.
 - Run `cargo test --all --features testutils` before you open a PR. CI runs the same command, along with a RustSec audit.
 - Any change to authorization, pause behaviour, or fund movement needs a test that exercises the rejected path, not only the success path.
+
+### Fork PRs: CI needs a maintainer to approve the run
+
+GitHub's default "require approval for first-time contributors" setting blocks workflow runs on pull requests from forks. Until a maintainer approves the run, the `pull_request`-triggered run sits at `action_required` with an empty `jobs` array — CI has not actually executed, even though the PR may look like it has a check attached.
+
+**Reviewers: before approving any fork PR for merge, click "Approve and run" on the pending workflow run and wait for it to finish green.** A PR with no executed CI run is not ready to merge, regardless of how the diff looks. You can confirm the state with:
+
+```bash
+gh run list --repo Konfirm-xyz/konfirm-contracts --limit 20
+gh run view <run-id> --json jobs,event,status,conclusion
+```
+
+A run showing `conclusion: action_required` and `jobs: []` has not run. Only a run with non-empty `jobs` and a `success`/`failure` conclusion reflects real CI.
+
+Maintainers can change the default under Settings → Actions → General → "Fork pull request workflows". The workflow only uses the default `GITHUB_TOKEN` for `audit-check`, so running fork PR workflows automatically is low-risk; keeping manual approval is also acceptable as a deliberate gate, provided reviewers follow the step above. This is a repository setting, not something a code change can enforce — the habit of approving the run before approving the PR is what keeps it from silently regressing.

@@ -1,5 +1,14 @@
 name: CI
 
+# NOTE (fork PRs): GitHub's default "require approval for first-time
+# contributors" setting blocks `pull_request`-triggered runs on fork PRs
+# until a maintainer clicks "Approve and run" — the run shows
+# `action_required` with an empty `jobs` array and CI never executes.
+# Reviewers MUST approve the pending run and wait for a green result
+# before approving/merging any fork PR. This is a repo Settings action
+# (Settings → Actions → General → "Fork pull request workflows"), not
+# something this workflow file can change.
+
 on:
   push:
     branches: [main]
