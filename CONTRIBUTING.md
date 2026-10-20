@@ -64,3 +64,14 @@ Fixing these is a documentation change. If you touch one of these functions, bri
 - Keep changes focused on one contract or one concern.
 - Run `cargo test --all --features testutils` before you open a PR. CI runs the same command, along with a RustSec audit.
 - Any change to authorization, pause behaviour, or fund movement needs a test that exercises the rejected path, not only the success path.
+
+## Branch protection on `main`
+
+`main` is protected. You cannot push to it directly, and CI results gate every merge. The rule is defined declaratively in [`.github/branch-protection.json`](.github/branch-protection.json) and applied with `gh api` (see the header of that file for the exact command). It enforces:
+
+- **Pull requests required.** All changes land via a PR with at least one approving review. Direct pushes to `main` are rejected.
+- **Required status checks.** The CI `test` job and the `audit` job must be green before a PR can merge. A failing or missing check blocks the merge.
+- **No force-push, no deletion.** Force-pushes and branch deletion on `main` are blocked.
+- **Signed commits required.** Commits on `main` must be signed.
+
+If you need to change the protection rule, edit `.github/branch-protection.json` and re-apply it — do not loosen it by hand in the GitHub UI, or the file and the live config will drift.

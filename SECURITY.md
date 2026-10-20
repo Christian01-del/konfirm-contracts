@@ -24,3 +24,14 @@ Out of scope:
 ## Response
 
 We aim to acknowledge reports within 5 business days. This is a small, actively developed project, so response and fix times may vary. We will keep you informed of progress and credit reporters who want to be credited.
+
+## Branch protection on `main`
+
+`main` is protected so that CI results gate every merge. The rule is declared in [`.github/branch-protection.json`](.github/branch-protection.json) and applied with:
+
+```
+gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/branches/main/protection \
+  --input .github/branch-protection.json
+```
+
+It requires the `test` and `audit` CI checks to pass, requires a pull request with at least one approving review, and blocks force-pushes and branch deletion. Verify it with `gh api repos/Konfirm-xyz/konfirm-contracts/branches/main/protection`.

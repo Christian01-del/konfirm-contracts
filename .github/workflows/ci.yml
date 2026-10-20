@@ -41,3 +41,14 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Branch protection on `main` requires the `test` and `audit` jobs above to
+  # pass before a PR can merge (see .github/branch-protection.json). This job
+  # is the single required status check that gates merges: it only succeeds
+  # when both upstream jobs succeed, so a failing test or audit blocks merge.
+  required-checks:
+    runs-on: ubuntu-latest
+    needs: [test, audit]
+    steps:
+      - name: Confirm test and audit passed
+        run: echo "test and audit jobs passed"

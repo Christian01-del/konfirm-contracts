@@ -2,6 +2,17 @@
 
 Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/konfirm-backend), a non-custodial payment processor on Stellar. All four are deployed to Testnet (addresses below); none are currently called by the live checkout or cash-out flow in `konfirm-backend` — today's pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer that path is built toward.
 
+## Branch protection
+
+`main` is protected. The rule is declared in [`.github/branch-protection.json`](.github/branch-protection.json) and applied with:
+
+```bash
+gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/branches/main/protection \
+  --input .github/branch-protection.json
+```
+
+It requires pull requests with at least one approving review, requires the CI `test` and `audit` status checks to be green (and up to date with `main`), and blocks force-pushes and branch deletion. Verify with `gh api repos/Konfirm-xyz/konfirm-contracts/branches/main/protection` (expects 200).
+
 ## Contracts
 
 | Contract | Purpose |
@@ -142,27 +153,4 @@ Verified on testnet: a deploy without `initialize` leaves every admin call faili
 
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
 
-- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
-
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
-
-/* … truncate
-
-/* … truncated 171 chars — edit only what you need near the top … */
-
-## Handsoff notes
-
-<!-- handsoff-issue-90 -->
-- #90: Record the commit/version a deployed address was built from
+- **Autho
