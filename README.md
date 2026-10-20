@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-51 -->
+- #51: Auth checked before the cheap pause check on 4 entry points
