@@ -139,3 +139,8 @@ Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforce
 - **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `c
 
 /* … truncated 716 chars — edit only what you need near the top … */
+
+## Handsoff notes
+
+<!-- handsoff-issue-82 -->
+- #82: Treasury's Signers has no explicit max-length check in initialize
