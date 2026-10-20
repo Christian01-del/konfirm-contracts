@@ -13,6 +13,10 @@ Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/kon
 
 Every contract follows the same shape: an `initialize` entry point, a `pause`/`unpause` pair, and mutations that check the pause flag before touching state.
 
+### Upgradeability
+
+All four contracts are **immutable by design**: none exposes `update_current_contract_wasm` or any other upgrade mechanism, even though the pinned `soroban-sdk` supports it. This is a deliberate trust-minimization choice — no admin key, multisig, or timelock can swap the code under a deployed instance. The operational consequence is that a bug found after deployment cannot be patched in place; it can only be fixed by shipping a whole new contract instance and migrating every open channel and pending settlement to it. The redeploy and migration mechanics are covered in #57.
+
 ### `compliance`
 
 | Function | Signature |
@@ -136,17 +140,4 @@ Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforce
 - **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
 - **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
 
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
-
-/* … truncated 854 chars — edit only what you need near the top … */
+If you add a `pub fn` that is neither, the check wi
