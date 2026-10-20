@@ -67,14 +67,14 @@ impl ComplianceContract {
 
     /// Admin-only (auth via `require_admin`). Fails with `NotInitialized` if
     /// the contract has no admin set.
-    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
+    fn require_admin(env: &Env) -> Result<(), ComplianceError> {
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .ok_or(ComplianceError::NotInitialized)?;
         admin.require_auth();
-        Ok(admin)
+        Ok(())
     }
 
     /// Returns `Paused` if the contract is paused; used to gate mutations.
@@ -195,36 +195,6 @@ mod test {
 
     fn setup(env: &Env) -> (ComplianceContractClient<'_>, Address) {
         let admin = Address::generate(env);
-        let contract_id = env.register(ComplianceContract, ());
-        let client = ComplianceContractClient::new(env, &contract_id);
-        client.initialize(&admin);
-        (client, admin)
-    }
+        le
 
-    #[test]
-    fn default_allow_until_blocked() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        assert!(client.is_allowed(&addr));
-        client.block_address(&addr);
-        assert!(!client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn clear_restores_default_allow() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.block_address(&addr);
-        assert!(!client.is_allowed(&addr));
-        client.allow_address(&addr);
-        assert!(client.is_allowed(&addr));
-        client.clear_address(&addr);
-        assert!(client.is_allowed(&ad
-
-/* … truncated 2050 chars — edit only what you need near the top … */
+/* … truncated 1038 chars — edit only what you need near the top … */
