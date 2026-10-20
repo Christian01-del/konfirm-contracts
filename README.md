@@ -71,16 +71,27 @@ The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/l
 
 ## Deployed addresses (Testnet)
 
-| Contract | Address |
-|---|---|
-| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` |
-| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` |
-| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` |
-| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` |
+Each address below was built from the commit recorded in the **Commit** column — the short SHA of `HEAD` at deploy time. To answer "which commit's wasm is this address running?", read the hash here (or the matching `commit` field in `artifacts/addresses.json`) and check it out; no `git log` archaeology required.
+
+| Contract | Address | Commit |
+|---|---|---|
+| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` | `7a4b664` |
+| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` | `7a4b664` |
+| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` | `7a4b664` |
+| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` | `7a4b664` |
 
 Deployer: `GAEMG5TVLEIQYCY3XB4EJT742DIE3FQO53RSESSYJQUZIWZOJQIZATJS`
 
 Treasury signers (2-of-3 threshold): `GAEMG5TVLEIQYCY3XB4EJT742DIE3FQO53RSESSYJQUZIWZOJQIZATJS`, `GBRUR4UZHKPQ76S4S7X7INENL6QJ4UGNFIQ3F6VAYJQZRO3F4XBZAIND`, `GCP57AJNZIVVTPPSD4MJ2SQDMTN4QEAUP64U2OZ4HXSAU4O4A6NOWY2Z`
+
+### Recording provenance on redeploy
+
+Whenever a contract is redeployed, record the commit it was built from so the mapping above never rots:
+
+1. Note the short SHA of `HEAD` at deploy time: `git rev-parse --short HEAD`.
+2. Update the **Commit** column for the redeployed contract(s) in the table above.
+3. Update the matching `commit` field next to that network's addresses in `artifacts/addresses.json`.
+4. Optionally tag the deploy (`git tag testnet-deploy-YYYY-MM-DD`) so the exact build is also reachable by tag.
 
 ## Tech stack
 
@@ -147,9 +158,11 @@ contracts/
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
                 NOT authoritative: it is nev
 
-/* … truncated 715 chars — edit only what you need near the top … */
+/* … truncate
+
+/* … truncated 171 chars — edit only what you need near the top … */
 
 ## Handsoff notes
 
-<!-- handsoff-issue-88 -->
-- #88: Fix inconsistent underscore grouping in test amount literals
+<!-- handsoff-issue-90 -->
+- #90: Record the commit/version a deployed address was built from
