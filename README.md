@@ -69,6 +69,8 @@ Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 
 
 The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature — the contract itself only enforces whatever value it was initialized with.
 
+**Intentionally unused by the current pilot:** `top_up`, `hold_channel`, and `release_hold` are not called by `konfirm-backend` or `konfirm-frontend` today — the pilot's happy path only needs `open_channel`/`checkpoint`/`initiate_close`/`finalize_close`/`get_channel_info`. They stay in the deployed contract as the on-chain surface for features that will need them: `top_up` when a channel must accept additional deposit capacity beyond its opening balance, and `hold_channel`/`release_hold` when dispute or hold semantics (freezing checkpointing without closing) land in the backend. Wire them up at that point rather than removing them now.
+
 ## Deployed addresses (Testnet)
 
 | Contract | Address |
@@ -145,16 +147,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
+/* … truncated 715 chars — edit only what you need near the top … */
