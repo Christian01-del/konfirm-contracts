@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# Repository Actions permission hardening (see issue #99):
+# The repo-level Actions permissions must not allow arbitrary third-party
+# actions. Configure via the API/settings (not code):
+#   gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/actions/permissions \
+#     -f allowed_actions=selected \
+#     -f 'selected_actions={...}'
+# Allowlist the actions actually used below:
+#   - actions/checkout
+#   - dtolnay/rust-toolchain
+#   - rustsec/audit-check
+# Once the companion mutable-tag-pinning issue is resolved, also enable
+# sha_pinning_required=true so only SHA-pinned actions may run.
+
 jobs:
   test:
     name: Test
