@@ -19,8 +19,11 @@ jobs:
       # testutils is an opt-in feature (see each contract's Cargo.toml) —
       # without it, Address::generate/Env::register don't exist and this
       # fails to even compile.
+      # --locked enforces the committed Cargo.lock: CI fails if it disagrees
+      # with any workspace Cargo.toml, so the lockfile stays the audit trail
+      # for verifying a deployed wasm hash against a specific source commit.
       - name: Run contract tests
-        run: cargo test --all --features testutils
+        run: cargo test --locked --all --features testutils
 
       # Every pub fn must either require auth or be documented Permissionless —
       # see "Authorization convention" in README.md.
