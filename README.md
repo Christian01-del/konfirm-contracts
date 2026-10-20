@@ -163,3 +163,6 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 <!-- handsoff-issue-74 -->
 - #74: Give channel a require_participant helper instead of inline checks
+
+<!-- handsoff-issue-75 -->
+- #75: checkpoint event omits new nonce, breaking event-only channel-state mirroring
