@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-160 -->
+- #160: channel's token-allowlist fix has no surviving setter — open_channel is now permanently bricked for every token
