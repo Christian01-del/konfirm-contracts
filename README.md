@@ -150,33 +150,6 @@ Note the single quotes wrapping the JSON array (so the shell passes it through v
 
 ```bash
 stellar contract asset deploy \
-  --asset "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" \
-  --source deployer --network testnet
-# -> prints the SAC contract id, use it as --token
-```
+  --a
 
-Alternatively, use the well-known testnet USDC SAC address published by Circle/Stellar (look it up on [Stellar Expert](https://stellar.expert/explorer/testnet) by searching the USDC issuer above) — any valid SAC contract id works for a first deploy.
-
-Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
-
-## Authorization convention
-
-Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
-
-- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
-
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
-
-/* … truncated 715 chars — edit only what you need near the top … */
+/* … truncated 1696 chars — edit only what you need near the top … */
