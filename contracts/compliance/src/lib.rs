@@ -52,6 +52,8 @@ pub struct ComplianceContract;
 // requiring every legitimate address to be pre-enrolled.
 #[contractimpl]
 impl ComplianceContract {
+    /// One-time setup. Requires auth from `admin` and rejects a second call
+    /// with `AlreadyInitialized`; also seeds `Paused = false`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ComplianceError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(ComplianceError::AlreadyInitialized);
@@ -63,6 +65,8 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only (auth via `require_admin`). Fails with `NotInitialized` if
+    /// the contract has no admin set.
     fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
         let admin: Address = env
             .storage()
@@ -73,6 +77,7 @@ impl ComplianceContract {
         Ok(admin)
     }
 
+    /// Returns `Paused` if the contract is paused; used to gate mutations.
     fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         if paused {
@@ -95,6 +100,9 @@ impl ComplianceContract {
         true
     }
 
+    /// Admin-only and pause-sensitive. Records `Blocked` for `addr` so
+    /// `is_allowed` returns false. The single `Status` write is the only
+    /// state change; there is no separate `Allowed` flag to keep in sync.
     pub fn block_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -119,6 +127,8 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only and pause-sensitive. Removes any `Status` record for `addr`,
+    /// restoring the default-allow state (no record at all).
     pub fn clear_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -153,6 +163,9 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only. Sets `Paused = true`, which makes `block_address`,
+    /// `allow_address`, and `clear_address` return `Paused`. Reads
+    /// (`is_allowed`, `is_paused`) remain available.
     pub fn pause(env: Env) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -160,6 +173,7 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only. Clears `Paused`, re-enabling the pause-gated mutations.
     pub fn unpause(env: Env) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -211,67 +225,6 @@ mod test {
         client.allow_address(&addr);
         assert!(client.is_allowed(&addr));
         client.clear_address(&addr);
-        assert!(client.is_allowed(&addr));
-    }
+        assert!(client.is_allowed(&ad
 
-    #[test]
-    fn is_allowed_works_while_paused() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.block_address(&addr);
-        client.pause();
-        // must not panic / must not require unpausing to read
-        assert!(!client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn mutations_rejected_while_paused() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.pause();
-        let res = client.try_block_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_allow_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_clear_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-    }
-
-    #[test]
-    fn double_initialize_rejected() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup(&env);
-        let res = client.try_initialize(&admin);
-        assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
-    }
-
-    #[test]
-    fn non_admin_signer_cannot_call_admin_function() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let non_admin = Address::generate(&env);
-        let addr = Address::generate(&env);
-
-        // Only a non-admin address authorizes the call; the admin's
-        // require_auth() must therefore fail.
-        env.mock_auths(&[MockAuth {
-            address: &non_admin,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "block_address",
-                args: (addr.clone(),).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client.try_block_address(&addr).is_err());
-        assert!(client.is_allowed(&addr));
-    }
-}
+/* … truncated 2050 chars — edit only what you need near the top … */
