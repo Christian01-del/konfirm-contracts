@@ -148,3 +148,8 @@ artifacts/      local deployment output (gitignored — contains only public add
                 NOT authoritative: it is nev
 
 /* … truncated 715 chars — edit only what you need near the top … */
+
+## Handsoff notes
+
+<!-- handsoff-issue-88 -->
+- #88: Fix inconsistent underscore grouping in test amount literals
