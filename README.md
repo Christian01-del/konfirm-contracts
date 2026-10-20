@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-68 -->
+- #68: Channel's extend_ttl threshold (100 ledgers) is too narrow to fire during normal use
