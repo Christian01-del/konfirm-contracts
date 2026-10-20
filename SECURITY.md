@@ -24,3 +24,27 @@ Out of scope:
 ## Response
 
 We aim to acknowledge reports within 5 business days. This is a small, actively developed project, so response and fix times may vary. We will keep you informed of progress and credit reporters who want to be credited.
+
+## Repository secret scanning
+
+This is a public repository that also holds deploy address files, so an accidentally committed key or token would be world-visible. GitHub-side secret scanning and push protection must stay enabled as a backstop. These are repository settings toggled by an org admin (Settings → Code security, or the API); they are not configured from code in this repo.
+
+Required state:
+
+- `secret_scanning.status == "enabled"`
+- `secret_scanning_push_protection.status == "enabled"`
+
+Verify with:
+
+```
+gh api repos/Konfirm-xyz/konfirm-contracts --jq '.security_and_analysis'
+```
+
+A quick pass/fail check that fails loudly if either is disabled:
+
+```
+gh api repos/Konfirm-xyz/konfirm-contracts \
+  --jq 'if (.security_and_analysis.secret_scanning.status == "enabled" and .security_and_analysis.secret_scanning_push_protection.status == "enabled") then "ok" else error("secret scanning and/or push protection disabled") end'
+```
+
+Recommended rollout: enable secret scanning first (free for public repos), then enable push protection once any legitimate testnet/test fixture patterns that trigger false positives have been allow-listed in the push protection settings.

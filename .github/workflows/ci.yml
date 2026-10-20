@@ -50,3 +50,55 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Issue #95: this is a public fund-custody repo (deploy addresses live here,
+  # and the org's other repos handle real deployer/facilitator keys). Secret
+  # scanning and push protection MUST stay enabled so an accidentally committed
+  # key/token is caught by GitHub before it is visible to the world.
+  #
+  # The toggles themselves are repo Settings (Settings → Code security) or the
+  # API — they cannot be flipped from this workflow. This job only verifies the
+  # expected state and fails loudly if either is disabled, so a regression is
+  # caught on the next push/PR instead of silently.
+  #
+  # Verify manually:
+  #   gh api repos/Konfirm-xyz/konfirm-contracts --jq '.security_and_analysis'
+  # Expected:
+  #   secret_scanning.status == "enabled"
+  #   secret_scanning_push_protection.status == "enabled"
+  #
+  # Rollout: enable secret scanning first (free for public repos), then push
+  # protection. If legitimate testnet/test fixture patterns trip push
+  # protection, allow-list them in Settings → Code security → Push protection
+  # bypass/allow-list rather than disabling the feature.
+  security-settings:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify secret scanning and push protection are enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          analysis=$(gh api "repos/${REPO}" --jq '.security_and_analysis')
+          echo "security_and_analysis: ${analysis}"
+          scanning=$(echo "${analysis}" | jq -r '.secret_scanning.status // "missing"')
+          push=$(echo "${analysis}" | jq -r '.secret_scanning_push_protection.status // "missing"')
+          echo "secret_scanning.status = ${scanning}"
+          echo "secret_scanning_push_protection.status = ${push}"
+          failed=0
+          if [ "${scanning}" != "enabled" ]; then
+            echo "::error::secret_scanning.status is '${scanning}', expected 'enabled' (issue #95)"
+            failed=1
+          fi
+          if [ "${push}" != "enabled" ]; then
+            echo "::error::secret_scanning_push_protection.status is '${push}', expected 'enabled' (issue #95)"
+            failed=1
+          fi
+          if [ "${failed}" -ne 0 ]; then
+            echo "Enable via Settings → Code security, or:"
+            echo "  gh api -X PATCH repos/${REPO} -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'"
+            exit 1
+          fi
