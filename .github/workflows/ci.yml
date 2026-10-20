@@ -102,3 +102,32 @@ jobs:
             echo "  gh api -X PATCH repos/${REPO} -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'"
             exit 1
           fi
+
+  # Issue #96: CodeQL / code-scanning adoption tracker (low priority).
+  #
+  # No code-scanning workflow exists today and `code-scanning/alerts` returns
+  # 404 "no analysis found" — this is a deliberate, tooling-maturity-justified
+  # gap, not negligence. CodeQL's Rust support is comparatively immature (no
+  # default-setup/autobuild parity with mature languages, and soroban-sdk's
+  # heavy macro use is a known weak spot for dataflow-based analyzers).
+  #
+  # Recommended: no action now. Revisit by 2026-06-30 (or sooner if CodeQL
+  # ships stable Rust/Soroban coverage). Candidates when revisited:
+  #   - CodeQL with `language: rust` in beta mode (accept noisy/incomplete
+  #     results as better than nothing), or
+  #   - lighter-weight static analysis: cargo-geiger (unsafe-usage audit) and
+  #     clippy's security-focused lints (partially covered already).
+  #
+  # This job intentionally does NOT run CodeQL — it only surfaces the tracker
+  # status in CI logs so the gap stays visible until it is revisited.
+  code-scanning-tracker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Note CodeQL/code-scanning adoption status (issue #96)
+        run: |
+          echo "CodeQL/code-scanning: not enabled (issue #96, low priority)."
+          echo "Reason: CodeQL Rust support immature; soroban-sdk macro-heavy code is a weak spot."
+          echo "Revisit by: 2026-06-30."
+          echo "Candidates: CodeQL rust beta mode; cargo-geiger; clippy security lints."

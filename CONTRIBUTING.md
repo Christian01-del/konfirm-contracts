@@ -79,3 +79,16 @@ gh run view <run-id> --json jobs,event,status,conclusion
 A run showing `conclusion: action_required` and `jobs: []` has not run. Only a run with non-empty `jobs` and a `success`/`failure` conclusion reflects real CI.
 
 Maintainers can change the default under Settings → Actions → General → "Fork pull request workflows". The workflow only uses the default `GITHUB_TOKEN` for `audit-check`, so running fork PR workflows automatically is low-risk; keeping manual approval is also acceptable as a deliberate gate, provided reviewers follow the step above. This is a repository setting, not something a code change can enforce — the habit of approving the run before approving the PR is what keeps it from silently regressing.
+
+## Code scanning (CodeQL) — tracked gap, revisit by 2026-06-30
+
+There is currently **no CodeQL or other code-scanning workflow** in this repository. `.github/workflows/` contains only `ci.yml`, and `gh api repos/Konfirm-xyz/konfirm-contracts/code-scanning/alerts` returns `404 "no analysis found"`. This is a deliberate, tooling-maturity-justified gap (tracked in issue #96), not an oversight.
+
+Why we are not adding it yet: CodeQL's Rust support is comparatively immature — there is no default-setup/autobuild parity with mature languages, and `soroban-sdk`'s heavy macro use is a known weak spot for dataflow-based analyzers. Adding it now would produce noisy, incomplete results.
+
+**Revisit by 2026-06-30** (or sooner if CodeQL's Rust/Soroban coverage improves). Candidates at that point:
+
+- CodeQL with the `rust` language in beta mode, accepting noisy/incomplete results as better than nothing.
+- Lighter-weight static analysis: `cargo-geiger` for unsafe-usage auditing, and clippy's security-focused lints (partially covered already).
+
+If you pick this up, update this section and the tracker issue together so the gap stays visible.
