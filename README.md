@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-61 -->
+- #61: Channel checkpoint: stale-nonce/stale-amount OR-guard and exact-deposit-cap boundary untested
