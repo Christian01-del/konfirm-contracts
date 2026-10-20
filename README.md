@@ -125,6 +125,38 @@ stellar contract invoke --id <CONTRACT_ID> \
 
 Each contract's `initialize` takes its own arguments: `compliance` and `payment` take `--admin`; `treasury` takes `--admin --token --signers --threshold`; `channel` takes `--admin --challenge_period_secs`. Calling it twice fails with `AlreadyInitialized`, which is the protection.
 
+### `treasury` deploy + initialize
+
+`treasury::initialize(env, admin: Address, token: Address, signers: Vec<Address>, threshold: u32)` takes a `Vec<Address>` for `signers`. The Stellar CLI parses that as a **JSON array of quoted addresses** — a bare space-separated list will not work:
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/konfirm_treasury.wasm \
+  --source deployer --network testnet
+# -> prints the contract id, <CONTRACT_ID>
+
+stellar contract invoke --id <CONTRACT_ID> \
+  --source deployer --network testnet \
+  -- initialize \
+  --admin <admin_address> \
+  --token <token_address> \
+  --signers '["G...signer1","G...signer2","G...signer3"]' \
+  --threshold 2
+```
+
+Note the single quotes wrapping the JSON array (so the shell passes it through verbatim) and the double quotes around each `G...` address inside it. `--threshold` must be `<=` the number of signers; the deployed instance uses 3 signers with `--threshold 2`.
+
+**Sourcing `--token` on testnet.** `--token` is the SAC (Stellar Asset Contract) address of the asset the treasury settles in. For a throwaway test token, deploy one and use the printed contract id:
+
+```bash
+stellar contract asset deploy \
+  --asset "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" \
+  --source deployer --network testnet
+# -> prints the SAC contract id, use it as --token
+```
+
+Alternatively, use the well-known testnet USDC SAC address published by Circle/Stellar (look it up on [Stellar Expert](https://stellar.expert/explorer/testnet) by searching the USDC issuer above) — any valid SAC contract id works for a first deploy.
+
 Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
 
 ## Authorization convention
@@ -145,16 +177,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
+/* … truncated 715 chars — edit only what you need near the top … */
