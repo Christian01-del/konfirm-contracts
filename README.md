@@ -163,3 +163,6 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 <!-- handsoff-issue-51 -->
 - #51: Auth checked before the cheap pause check on 4 entry points
+
+<!-- handsoff-issue-52 -->
+- #52: Suspected: Channel struct rewrites immutable fields on every high-frequency mutation
