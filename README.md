@@ -152,3 +152,8 @@ artifacts/      local deployment output (gitignored — contains only public add
                 NOT authoritative: it is nev
 
 /* … truncated 715 chars — edit only what you need near the top … */
+
+## Handsoff notes
+
+<!-- handsoff-issue-110 -->
+- #110: Test treasury::initialize's upper threshold boundary
