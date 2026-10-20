@@ -166,3 +166,6 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 <!-- handsoff-issue-52 -->
 - #52: Suspected: Channel struct rewrites immutable fields on every high-frequency mutation
+
+<!-- handsoff-issue-53 -->
+- #53: Treasury proposed/approved events never record which signer acted
