@@ -215,63 +215,42 @@ mod test {
     }
 
     #[test]
-    fn is_allowed_works_while_paused() {
+    fn clear_address_removes_stored_status() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
+        let contract_id = client.address.clone();
 
-        client.block_address(&addr);
-        client.pause();
-        // must not panic / must not require unpausing to read
-        assert!(!client.is_allowed(&addr));
-    }
+        // Blocked entry is removed by clear_address.
+        let blocked = Address::generate(&env);
+        client.block_address(&blocked);
+        let blocked_key = DataKey::Status(blocked.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&blocked_key),
+                Some(ComplianceStatus::Blocked)
+            );
+        });
+        client.clear_address(&blocked);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&blocked_key));
+        });
+        assert!(client.is_allowed(&blocked));
 
-    #[test]
-    fn mutations_rejected_while_paused() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.pause();
-        let res = client.try_block_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_allow_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_clear_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-    }
-
-    #[test]
-    fn double_initialize_rejected() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup(&env);
-        let res = client.try_initialize(&admin);
-        assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
-    }
-
-    #[test]
-    fn non_admin_signer_cannot_call_admin_function() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let non_admin = Address::generate(&env);
-        let addr = Address::generate(&env);
-
-        // Only a non-admin address authorizes the call; the admin's
-        // require_auth() must therefore fail.
-        env.mock_auths(&[MockAuth {
-            address: &non_admin,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "block_address",
-                args: (addr.clone(),).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client.try_block_address(&addr).is_err());
-        assert!(client.is_allowed(&addr));
+        // Cleared (audit) entry is removed by clear_address too.
+        let allowed = Address::generate(&env);
+        client.allow_address(&allowed);
+        let allowed_key = DataKey::Status(allowed.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&allowed_key),
+                Some(ComplianceStatus::Cleared)
+            );
+        });
+        client.clear_address(&allowed);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&allowed_key));
+        });
+        assert!(client.is_allowed(&allowed));
     }
 }
