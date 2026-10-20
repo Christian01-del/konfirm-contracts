@@ -136,6 +136,12 @@ Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforce
 
 If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
 
+## Cross-contract calls require a same-Env integration test
+
+No contract currently calls another contract's address, and no test registers two contracts in the same `Env`. That is correct today: the pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer it is built toward.
+
+**Tripwire (backlog):** the moment any contract gains a call into another contract's address — e.g. `channel`/`treasury` wiring for the netting-engine work, or `compliance` gating `payment`/`treasury` on-chain — a same-`Env`, two-contract integration test **must land in the same PR**. The test must assert the cross-contract call path behaves correctly, including the failure path (e.g. what happens when the called contract is paused or panics mid-call). Do not add cross-contract dependencies to a `Cargo.toml` or introduce cross-contract calls without that test.
+
 ## Project structure
 
 ```
@@ -145,21 +151,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-61 -->
-- #61: Channel checkpoint: stale-nonce/stale-amount OR-guard and exact-deposit-cap boundary untested
+/* … truncated 863 chars — edit only what you need near the top … */
