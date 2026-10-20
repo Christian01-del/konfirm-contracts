@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-77 -->
+- #77: record_payment event omits payer and tx_hash, the fields that make it verifiable
