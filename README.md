@@ -129,6 +129,39 @@ Each contract's `initialize` takes its own arguments: `compliance` and `payment`
 
 Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
 
+## Deploying to mainnet
+
+Mainnet deployment is real, near-term work: `konfirm-backend`'s [mainnet spec](https://github.com/Konfirm-xyz/konfirm-backend/blob/main/docs/specs/06-mainnet.md) lists "deployed by us, after the audit" as a named pre-launch item, and its `stellar-network.ts` already has a parallel mainnet preset waiting to receive real contract IDs. This repo owns and deploys the contracts, so the procedure lives here. Both repos must agree on the addresses produced by this section.
+
+**Do not deploy to mainnet before the audit is complete.** The steps below are the documented procedure for that post-audit deploy.
+
+The only difference from the testnet flow above is the network flag: use `--network mainnet` (the Stellar CLI's name for the public network; `pubnet` is not a valid value). Everything else — build, deploy, then a separate `initialize` — is identical.
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/konfirm_treasury.wasm \
+  --source deployer --network mainnet
+# -> prints the contract id, <CONTRACT_ID>
+
+stellar contract invoke --id <CONTRACT_ID> \
+  --source deployer --network mainnet \
+  -- initialize \
+     --admin <admin_address> \
+     --token <MAINNET_USDC_SAC> \
+     --signers '[<signer1>,<signer2>,<signer3>]' \
+     --threshold 2
+```
+
+### Mainnet USDC SAC is a required, verified parameter
+
+`treasury --token` must be the **mainnet** USDC Stellar Asset Contract address. This is a required parameter and must be verified before running `initialize`:
+
+- **Never reuse the testnet USDC SAC.** The testnet and mainnet SACs are different contract IDs; initializing `treasury` with the testnet SAC on mainnet would point settlement at an asset that does not exist there, and `initialize` cannot be re-run (`AlreadyInitialized`).
+- Confirm the value against the canonical mainnet USDC issuer/SAC published by Circle / Stellar before deploying, and record the exact address used in the deploy notes so `konfirm-backend`'s mainnet preset can be updated to match.
+- Double-check the `--network` flag on both the `deploy` and `invoke` commands — a testnet SAC paired with `--network mainnet` (or vice versa) is the failure mode this checklist exists to catch.
+
+After deploying, update `konfirm-backend`'s `stellar-network.ts` mainnet preset with the four new contract IDs, and keep this README's deployed-addresses section in sync.
+
 ## Authorization convention
 
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
@@ -146,7 +179,6 @@ contracts/
   payment/      payment attestation + refund tracking
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is ne
+artifacts/      local deployment ou
 
-/* … truncated 72 chars — edit only what you need near the top … */
+/* … truncated 210 chars — edit only what you need near the top … */
