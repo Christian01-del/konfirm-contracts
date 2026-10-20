@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-154 -->
+- #154: Issue #27's fix never added the negative-amount test its own title promised
