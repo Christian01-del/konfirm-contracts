@@ -71,6 +71,8 @@ The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/l
 
 ## Deployed addresses (Testnet)
 
+This table is the **single source of truth** for deployed contract addresses. Any other file that records a deployed address (e.g. a local `artifacts/addresses.json`) is non-authoritative and is checked against this table by `scripts/check_deployed_addresses.py` in CI — a mismatch fails the build.
+
 | Contract | Address |
 |---|---|
 | Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` |
@@ -145,27 +147,7 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
+                NOT authoritative: it is never regenerated automatically and can go stale. The Deployed addresses table above is the source of truth;
+                scripts/check_deployed_addresses.py fails CI if any tracked file disagrees with it.
+scripts/        repo checks (pub fn auth, deployed-address consistency)
 ```
-
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-51 -->
-- #51: Auth checked before the cheap pause check on 4 entry points
-
-<!-- handsoff-issue-52 -->
-- #52: Suspected: Channel struct rewrites immutable fields on every high-frequency mutation
-
-<!-- handsoff-issue-53 -->
-- #53: Treasury proposed/approved events never record which signer acted

@@ -27,6 +27,11 @@ jobs:
       - name: Check pub fn authorization
         run: python3 scripts/check_pub_fn_auth.py
 
+      # README's Deployed Addresses table is the source of truth — fail if any
+      # tracked file (e.g. a stale artifacts/addresses.json) disagrees with it.
+      - name: Check deployed addresses match README
+        run: python3 scripts/check_addresses.py
+
   audit:
     runs-on: ubuntu-latest
     # rustsec/audit-check publishes its findings as a GitHub Check Run,
