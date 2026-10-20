@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-38 -->
+- #38: Suspected: open_channel never validates payee != payer
