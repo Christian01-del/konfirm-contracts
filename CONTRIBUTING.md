@@ -64,3 +64,4 @@ Fixing these is a documentation change. If you touch one of these functions, bri
 - Keep changes focused on one contract or one concern.
 - Run `cargo test --all --features testutils` before you open a PR. CI runs the same command, along with a RustSec audit.
 - Any change to authorization, pause behaviour, or fund movement needs a test that exercises the rejected path, not only the success path.
+- Merged PR branches are deleted automatically (`delete_branch_on_merge` is enabled on the repo). Don't rely on a merged branch lingering for an audit trail — reference the PR number or commit SHA instead.

@@ -2,6 +2,10 @@
 
 Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/konfirm-backend), a non-custodial payment processor on Stellar. All four are deployed to Testnet (addresses below); none are currently called by the live checkout or cash-out flow in `konfirm-backend` — today's pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer that path is built toward.
 
+## Repository hygiene
+
+"Automatically delete head branches" is enabled on this repository (`delete_branch_on_merge: true`), so merged PR branches are removed automatically and stale branches don't accumulate. If you need to keep a branch after merge for audit-trail reasons, restore it from the merge commit rather than disabling the setting.
+
 ## Contracts
 
 | Contract | Purpose |
@@ -145,16 +149,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
+/* … truncated 715 chars — edit only what you need near the top … */
