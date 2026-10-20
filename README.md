@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-150 -->
+- #150: open_count tracking exists but the per-payer channel cap is never enforced (plus a second, uncatalogued compile error)
