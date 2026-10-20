@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-50 -->
+- #50: claim_payload makes 7 host calls to build a 47-byte buffer on the hottest path
