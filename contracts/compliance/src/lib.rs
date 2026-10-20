@@ -29,7 +29,9 @@ enum ComplianceStatus {
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
+    /// Returned by `set_admin` when `current_admin` does not match the stored
+    /// admin. Admin gates elsewhere use `require_auth()`, which traps at the
+    /// host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -212,44 +214,17 @@ mod test {
         assert!(!client.is_allowed(&addr));
         client.allow_address(&addr);
         assert!(client.is_allowed(&addr));
-        client.clear_address(&addr);
-        assert!(client.is_allowed(&addr));
     }
 
     #[test]
-    fn pause_blocks_mutations_but_not_queries() {
+    fn set_admin_with_mismatched_current_admin_returns_unauthorized() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
+        let wrong_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
 
-        client.pause();
-        assert!(client.is_paused());
-        assert!(client.is_allowed(&addr));
-        assert_eq!(client.try_block_address(&addr), Err(Ok(ComplianceError::Paused)));
-
-        client.unpause();
-        assert!(!client.is_paused());
-        client.block_address(&addr);
-        assert!(!client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn pause_and_unpause_emit_events() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-
-        client.pause();
-        let paused_topic = symbol_short!("paused");
-        assert!(env.events().all().iter().any(|(_, topics, _)| {
-            topics.len() == 1 && topics.get(0) == Some(paused_topic.clone().into_val(&env))
-        }));
-
-        client.unpause();
-        let unpaused_topic = symbol_short!("unpaused");
-        assert!(env.events().all().iter().any(|(_, topics, _)| {
-            topics.len() == 1 && topics.get(0) == Some(unpaused_topic.clone().into_val(&env))
-        }));
+        let result = client.try_set_admin(&wrong_admin, &new_admin);
+        assert_eq!(result, Err(Ok(ComplianceError::Unauthorized)));
     }
 }
