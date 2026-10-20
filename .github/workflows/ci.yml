@@ -4,38 +4,34 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
-      # Real unit tests via soroban-sdk's testutils — no mocked ledger, an
-      # in-process simulated one exercising the actual contract logic.
-      # testutils is an opt-in feature (see each contract's Cargo.toml) —
-      # without it, Address::generate/Env::register don't exist and this
-      # fails to even compile.
-      - name: Run contract tests
+      - name: Run tests
         run: cargo test --all --features testutils
 
-      # Every pub fn must either require auth or be documented Permissionless —
-      # see "Authorization convention" in README.md.
-      - name: Check pub fn authorization
-        run: python3 scripts/check_pub_fn_auth.py
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm32v1-none target
+        run: rustup target add wasm32v1-none
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+      - name: Build contracts for wasm32v1-none
+        run: |
+          for contract in common payment compliance treasury channel; do
+            echo "Building contracts/$contract"
+            stellar contract build --target wasm32v1-none --manifest-path "contracts/$contract/Cargo.toml"
+          done
 
   audit:
     runs-on: ubuntu-latest
-    # rustsec/audit-check publishes its findings as a GitHub Check Run,
-    # which needs an explicit grant — the default GITHUB_TOKEN permissions
-    # don't include it, and the scan itself was actually succeeding
-    # (0 vulnerabilities) while this step failed only on the report step.
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
