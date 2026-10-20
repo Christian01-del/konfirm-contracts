@@ -38,3 +38,7 @@ None of the four contracts is called by the live checkout or cash-out flow yet. 
 - **Deploy and initialize are separate steps.** The contracts have no constructor. A deployed but uninitialized contract rejects admin calls with `NotInitialized`. See the README's deploy section.
 - **The challenge period is a deployment parameter.** `channel` takes `challenge_period_secs` at `initialize` and does not hard-code it. The deployed Testnet instance uses 86400 seconds.
 - **Treasury threshold is fixed at initialization.** The Testnet instance is 2-of-3. Changing it means a new deployment.
+
+## Design decisions
+
+- **`record_payment` keeps five flat scalar parameters (declined: input struct).** `record_payment` takes its five fields as flat scalars rather than a single input struct, even though they map field-for-field to the `PaymentRecord` it builds. The only caller is `konfirm-backend`'s reconciler, which lives in a separate repository and invokes the contract through generated client bindings; those bindings, and raw Soroban CLI invocation, are both more ergonomic with flat scalar arguments than with a nested struct. A struct parameter would therefore add signature sprawl without any practical benefit at the call site, so the flat signature is intentional and should not be re-raised as a cleanup item.
