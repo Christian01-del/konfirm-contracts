@@ -2,6 +2,8 @@
 
 Four Soroban smart contracts backing [Konfirm](https://github.com/Konfirm-xyz/konfirm-backend), a non-custodial payment processor on Stellar. All four are deployed to Testnet (addresses below); none are currently called by the live checkout or cash-out flow in `konfirm-backend` — today's pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer that path is built toward.
 
+> Redeploying? See [RUNBOOK.md](RUNBOOK.md) for the full procedure, including what happens to in-flight treasury/channel state at cutover.
+
 ## Contracts
 
 | Contract | Purpose |
@@ -145,6 +147,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
+                NOT authoritative: it is ne
 
-/* … truncated 715 chars — edit only what you need near the top … */
+/* … truncated 72 chars — edit only what you need near the top … */
