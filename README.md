@@ -109,8 +109,10 @@ cargo test --all --features testutils
 The `testutils` feature must be enabled. Plain `cargo test` fails to compile, because the test code imports `soroban_sdk::testutils`. CI runs the command above.
 
 ```bash
-stellar contract build --target wasm32v1-none
+stellar contract build
 ```
+
+Current `stellar-cli` (27.x) bakes in the `wasm32v1-none` target for `contract build` and rejects a `--target` flag, so no target argument is needed.
 
 Deploy, then initialize. These contracts have **no constructor**: passing `-- --admin ...` at deploy time does not set them up. The `initialize` call is separate. The `channel` example:
 
@@ -134,19 +136,6 @@ Verified on testnet: a deploy without `initialize` leaves every admin call faili
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
 
 - **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
+- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `c
 
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
-
-/* … truncated 715 chars — edit only what you need near the top … */
+/* … truncated 716 chars — edit only what you need near the top … */
