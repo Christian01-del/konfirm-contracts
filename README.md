@@ -65,7 +65,7 @@ Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-t
 | `set_admin` | `(current_admin: Address, new_admin: Address)` — both must authorize; not pause-gated |
 | `pause` / `unpause` | `()` |
 
-Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload, so a signature from this contract can never be replayed against a different one.
+Signed checkpoint messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload. The full payload is `DOMAIN_TAG || channel_id (u64 BE) || nonce (u64 BE) || cumulative_amount (i128 BE)` — it does **not** include the contract's own address. Because `DOMAIN_TAG` is a compile-time constant identical across every deployment of the same source, this prevents replay across `(channel_id, nonce, cumulative_amount)` within a single deployed instance, but it does **not** prevent replay of a signature against a different deployment of the same contract. Binding `env.current_contract_address()` into the payload would close that gap; that change is tracked separately.
 
 The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature — the contract itself only enforces whatever value it was initialized with.
 
@@ -145,24 +145,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-83 -->
-- #83: Add a setup() helper to channel's test module, unlike the other 3 contracts
-
-<!-- handsoff-issue-84 -->
-- #84: Treasury's short-balance test doesn't distinguish a trap from a typed error
+/* … truncated 956 chars — edit only what you need near the top … */
