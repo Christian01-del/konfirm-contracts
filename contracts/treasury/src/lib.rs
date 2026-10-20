@@ -211,16 +211,25 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Signer-only, pause-gated. Any one signer (`caller`) can execute once the
-    /// settlement's approval count reaches the threshold; fails with
-    /// `ThresholdNotMet` before then. Executing does not count as an approval.
-    /// Transfers `amount` of the payout token from the treasury to the
-    /// merchant, then marks the settlement `Executed`. If the transfer traps,
-    /// the whole call reverts and the settlement stays `Pending`. Also fails
-    /// with `NotSigner`, `NotFound`, `NotPending`, and `Paused` while paused.
-    pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
+    /// Signer-only, pause-gated. Moves a `Pending` settlement to `Cancelled`,
+    /// formally retiring a wrong or mistaken proposal so it can never be
+    /// approved or executed. Authorized by any signer (the proposer is a
+    /// signer, so this covers the proposer case) or the admin. Does not move
+    /// funds. Fails with `NotSigner`/`NotInitialized`, `NotFound`,
+    /// `NotPending` if the settlement is already `Executed` or `Cancelled`,
+    /// and `Paused` while paused. Emits a `cancelled` event.
+    pub fn cancel_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        Self::require_signer(&env, &caller)?;
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(TreasuryError::NotInitialized)?;
+        if caller != admin {
+            Self::require_signer(&env, &caller)?;
+        }
         require_not_paused(&env, &DataKey::Paused)?;
 
         let mut settlement: Settlement = env
@@ -231,41 +240,12 @@ impl TreasuryContract {
         if settlement.status != SettlementStatus::Pending {
             return Err(TreasuryError::NotPending);
         }
-        let threshold: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Threshold)
-            .ok_or(TreasuryError::NotInitialized)?;
-        if settlement.approvals.len() < threshold {
-            return Err(TreasuryError::ThresholdNotMet);
-        }
-
-        let token_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(TreasuryError::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&env.current_contract_address(), &settlement.merchant, &settlement.amount);
-
-        settlement.status = SettlementStatus::Executed;
+        settlement.status = SettlementStatus::Cancelled;
         Self::save_settlement(&env, settlement_id, &settlement);
-        env.events().publish((symbol_short!("executed"),), settlement_id);
+        env.events().publish((symbol_short!("cancelled"),), settlement_id);
         Ok(())
     }
 
-    /// Read-only. Returns the settlement with `settlement_id`, or `NotFound`.
-    pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Settlement(settlement_id))
-            .ok_or(TreasuryError::NotFound)
-    }
+    /// Signer-onl
 
-    /// Admin-only. Pauses or unpauses the contract.
-    pub fn set_paused(env: Env, paused: bool) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        set_paused(&env, &DataKey::Paused, paused);
-        Ok(())
-    }
-}
+/* … truncated 2538 chars — edit only what you need near the top … */
