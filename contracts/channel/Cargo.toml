@@ -12,6 +12,12 @@ doctest = false
 [dependencies]
 konfirm-common = { path = "../common" }
 soroban-sdk = "27.0.5"
+# Pure-Rust ed25519 verification so checkpoint() can return a typed
+# ChannelError::InvalidSignature instead of trapping via the host
+# env.crypto().ed25519_verify (which panics on failure in soroban-sdk 27).
+# default-features off for no_std/wasm compatibility; "alloc" is required
+# by ed25519-dalek's no_std build.
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 # Already present transitively (soroban-sdk's own testutils::sign module
