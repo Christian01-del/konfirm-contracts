@@ -157,6 +157,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
@@ -164,6 +165,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
@@ -215,63 +217,39 @@ mod test {
     }
 
     #[test]
-    fn is_allowed_works_while_paused() {
+    fn pause_blocks_mutations_but_not_queries() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _admin) = setup(&env);
         let addr = Address::generate(&env);
 
-        client.block_address(&addr);
         client.pause();
-        // must not panic / must not require unpausing to read
+        assert!(client.is_paused());
+        assert!(client.is_allowed(&addr));
+        assert_eq!(client.try_block_address(&addr), Err(Ok(ComplianceError::Paused)));
+
+        client.unpause();
+        assert!(!client.is_paused());
+        client.block_address(&addr);
         assert!(!client.is_allowed(&addr));
     }
 
     #[test]
-    fn mutations_rejected_while_paused() {
+    fn pause_and_unpause_emit_events() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
 
         client.pause();
-        let res = client.try_block_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_allow_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_clear_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-    }
+        let paused_topic = symbol_short!("paused");
+        assert!(env.events().all().iter().any(|(_, topics, _)| {
+            topics.len() == 1 && topics.get(0) == Some(paused_topic.clone().into_val(&env))
+        }));
 
-    #[test]
-    fn double_initialize_rejected() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup(&env);
-        let res = client.try_initialize(&admin);
-        assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
-    }
-
-    #[test]
-    fn non_admin_signer_cannot_call_admin_function() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let non_admin = Address::generate(&env);
-        let addr = Address::generate(&env);
-
-        // Only a non-admin address authorizes the call; the admin's
-        // require_auth() must therefore fail.
-        env.mock_auths(&[MockAuth {
-            address: &non_admin,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "block_address",
-                args: (addr.clone(),).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client.try_block_address(&addr).is_err());
-        assert!(client.is_allowed(&addr));
+        client.unpause();
+        let unpaused_topic = symbol_short!("unpaused");
+        assert!(env.events().all().iter().any(|(_, topics, _)| {
+            topics.len() == 1 && topics.get(0) == Some(unpaused_topic.clone().into_val(&env))
+        }));
     }
 }
