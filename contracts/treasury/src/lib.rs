@@ -149,11 +149,49 @@ impl TreasuryContract {
             .extend_ttl(&DataKey::Settlement(id), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
+    // Current token balance held by this contract.
+    fn token_balance(env: &Env) -> i128 {
+        let token: Address = match env.storage().instance().get(&DataKey::Token) {
+            Some(t) => t,
+            None => return 0,
+        };
+        token::Client::new(env, &token).balance(&env.current_contract_address())
+    }
+
+    // Sum of `amount` across every still-`Pending` settlement. These have
+    // first claim on the treasury balance ahead of any newly-approved
+    // settlement, so signers should treat this as committed funds.
+    fn pending_committed(env: &Env) -> i128 {
+        let next_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
+        let mut total: i128 = 0;
+        let mut id: u64 = 1;
+        while id < next_id {
+            if let Some(settlement) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Settlement>(&DataKey::Settlement(id))
+            {
+                if settlement.status == SettlementStatus::Pending {
+                    total += settlement.amount;
+                }
+            }
+            id += 1;
+        }
+        total
+    }
+
     /// Signer-only, pause-gated. Opens a new `Pending` settlement paying
     /// `amount` to `merchant` and returns its id. The proposer's approval
     /// counts as the first of the `threshold` required. Does not move funds.
     /// Fails with `NotSigner`, `ZeroAmount` if `amount <= 0`, and `Paused`
     /// while paused.
+    ///
+    /// Deliberate choice: this does NOT reject a proposal that would
+    /// over-commit the treasury. Over-commitment is allowed and surfaces at
+    /// `execute_settlement` time (which traps rather than falsely succeeding).
+    /// Signers should consult `available_balance` / `is_settlement_payable`
+    /// before approving to avoid committing to a settlement that cannot be
+    /// paid in full.
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -211,41 +249,46 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Signer-only, pause-gated. Moves a `Pending` settlement to `Cancelled`,
-    /// formally retiring a wrong or mistaken proposal so it can never be
-    /// approved or executed. Authorized by any signer (the proposer is a
-    /// signer, so this covers the proposer case) or the admin. Does not move
-    /// funds. Fails with `NotSigner`/`NotInitialized`, `NotFound`,
-    /// `NotPending` if the settlement is already `Executed` or `Cancelled`,
-    /// and `Paused` while paused. Emits a `cancelled` event.
-    pub fn cancel_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        caller.require_auth();
+    /// Read-only view. Returns the treasury's current token balance minus the
+    /// sum of `amount` across every still-`Pending` settlement. This is the
+    /// balance available to a newly-approved settlement after already-pending
+    /// settlements' first claim. A negative result means the treasury is
+    /// over-committed: some pending settlements cannot be paid in full even
+    /// if all of them execute. Signers/tooling should check this before
+    /// approving a settlement.
+    pub fn available_balance(env: Env) -> i128 {
+        Self::token_balance(&env) - Self::pending_committed(&env)
+    }
 
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(TreasuryError::NotInitialized)?;
-        if caller != admin {
-            Self::require_signer(&env, &caller)?;
-        }
-        require_not_paused(&env, &DataKey::Paused)?;
+    /// Read-only view. Returns the total amount committed to still-`Pending`
+    /// settlements (their first claim on the treasury balance).
+    pub fn committed_balance(env: Env) -> i128 {
+        Self::pending_committed(&env)
+    }
 
-        let mut settlement: Settlement = env
+    /// Read-only view. Reports whether `settlement_id` is currently payable in
+    /// full given the treasury balance and the first claim of all *other*
+    /// still-`Pending` settlements. Returns `false` for a missing or
+    /// non-`Pending` settlement. This is a proactive signal: `execute_settlement`
+    /// traps rather than falsely succeeding when a settlement is underfunded,
+    /// so callers should consult this before relying on a settlement being
+    /// payable.
+    pub fn is_settlement_payable(env: Env, settlement_id: u64) -> bool {
+        let settlement: Settlement = match env
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
-            .ok_or(TreasuryError::NotFound)?;
+        {
+            Some(s) => s,
+            None => return false,
+        };
         if settlement.status != SettlementStatus::Pending {
-            return Err(TreasuryError::NotPending);
+            return false;
         }
-        settlement.status = SettlementStatus::Cancelled;
-        Self::save_settlement(&env, settlement_id, &settlement);
-        env.events().publish((symbol_short!("cancelled"),), settlement_id);
-        Ok(())
+        let others = Self::pending_committed(&env) - settlement.amount;
+        Self::token_balance(&env) - others >= settlement.amount
     }
 
     /// Signer-onl
 
-/* … truncated 2538 chars — edit only what you need near the top … */
+/* … truncated 1642 chars — edit only what you need near the top … */
