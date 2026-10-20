@@ -163,3 +163,6 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 <!-- handsoff-issue-83 -->
 - #83: Add a setup() helper to channel's test module, unlike the other 3 contracts
+
+<!-- handsoff-issue-84 -->
+- #84: Treasury's short-balance test doesn't distinguish a trap from a typed error
