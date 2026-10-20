@@ -47,9 +47,11 @@ Default-allow: an address is permitted unless explicitly blocked. `clear_address
 | `approve_settlement` | `(signer: Address, settlement_id: u64)` — rejects non-signers and double-approval |
 | `execute_settlement` | `(caller: Address, settlement_id: u64)` — caller must be a signer; only once threshold is met; rejects double-execution |
 | `get_settlement` | `(settlement_id: u64) -> Settlement` |
-| `pause` / `unpause` | `()` |
+| `pause` / `unpause` | `()` — gated by the signer threshold, not a single admin key |
 
 Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-testnet)).
+
+**Pause is signer-threshold-gated.** Unlike `compliance`, `payment`, and `channel` — whose `pause`/`unpause` are single-admin-key operations — `treasury`'s `pause`/`unpause` require the same signer threshold used for settlements. A single admin key cannot unilaterally freeze the treasury; pausing requires the same N-of-M signer approval as a settlement. This closes the single-key pause-DoS surface on the treasury contract.
 
 ### `channel`
 
@@ -145,21 +147,6 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-68 -->
-- #68: Channel's extend_ttl threshold (100 ledgers) is too narrow to fire during normal use
+/* … truncated 854 chars — edit only what you need near the top … */
