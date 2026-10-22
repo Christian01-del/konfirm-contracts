@@ -159,4 +159,35 @@ Verified on testnet: a deploy without `initialize` leaves every admin call faili
 
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
 
-- **Autho
+- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
+- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
+
+If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
+
+## Project structure
+
+```
+contracts/
+  compliance/   allow/deny-list screening
+  payment/      payment attestation + refund tracking
+  treasury/     multisig settlement
+  channel/      escrow-backed payment channels
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
+                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
+```
+
+## Known limitations
+
+- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
+- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
+- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
+
+## License
+
+[MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-77 -->
+- #77: record_payment event omits payer and tx_hash, the fields that make it verifiable

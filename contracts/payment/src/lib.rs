@@ -24,11 +24,19 @@ pub trait ComplianceInterface {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaymentRecord {
+    /// Address that received the funds.
     pub merchant: Address,
+    /// Address the funds came from.
     pub payer: Address,
+    /// Off-chain payment link this payment settles.
     pub link_id: u64,
+    /// Transferred amount in the asset's base units; always `> 0`.
     pub amount: i128,
+    /// Hash of the Stellar transaction that moved the funds. Each hash can be
+    /// recorded once; used to dedupe attestations.
     pub tx_hash: BytesN<32>,
+    /// Set by `mark_refunded` once the refund has been flagged. Bookkeeping
+    /// only — the refund transfer itself is not made by this contract.
     pub refunded: bool,
 }
 
