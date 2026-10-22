@@ -46,20 +46,13 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Repo hygiene: keep delete_branch_on_merge enabled so merged PR head
-  # branches are auto-deleted instead of accumulating. Idempotent — only
-  # touches this single setting, leaving merge/rebase/auto-merge and branch
-  # protection untouched.
-  repo-hygiene:
+  # Branch protection on `main` requires the `test` and `audit` jobs above to
+  # pass before a PR can merge (see .github/branch-protection.json). This job
+  # is the single required status check that gates merges: it only succeeds
+  # when both upstream jobs succeed, so a failing test or audit blocks merge.
+  required-checks:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
+    needs: [test, audit]
     steps:
-      - name: Enable delete_branch_on_merge
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method PATCH repos/${{ github.repository }} \
-            -F delete_branch_on_merge=true
-          gh api repos/${{ github.repository }} --jq .delete_branch_on_merge
+      - name: Confirm test and audit passed
+        run: echo "test and audit jobs passed"

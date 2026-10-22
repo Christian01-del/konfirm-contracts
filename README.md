@@ -2,9 +2,16 @@
 
 Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/konfirm-backend), a non-custodial payment processor on Stellar. All four are deployed to Testnet (addresses below); none are currently called by the live checkout or cash-out flow in `konfirm-backend` — today's pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer that path is built toward.
 
-## Repository hygiene
+## Branch protection
 
-"Automatically delete head branches" is enabled on this repository (`delete_branch_on_merge: true`), so merged PR branches are removed automatically and stale branches don't accumulate. If you need to keep a branch after merge for audit-trail reasons, restore it from the merge commit rather than disabling the setting.
+`main` is protected. The rule is declared in [`.github/branch-protection.json`](.github/branch-protection.json) and applied with:
+
+```bash
+gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/branches/main/protection \
+  --input .github/branch-protection.json
+```
+
+It requires pull requests with at least one approving review, requires the CI `test` and `audit` status checks to be green (and up to date with `main`), and blocks force-pushes and branch deletion. Verify with `gh api repos/Konfirm-xyz/konfirm-contracts/branches/main/protection` (expects 200).
 
 ## Contracts
 
@@ -13,7 +20,7 @@ Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/kon
 | `compliance` | Default-allow address screening with an explicit deny/allow list, pausable |
 | `payment` | Attestation layer — records that a payment happened and its refund state; not an escrow |
 | `treasury` | 2-of-3 multisig settlement: propose → approve → execute |
-| `channel` | Escrow-backed payment channels with checkpointing, a configurable challenge period, and cooperative or unilateral close |
+| `channel` | Escrow-backed payment channels with checkpointing, a configurable challenge period, and unilateral close |
 
 Every contract follows the same shape: an `initialize` entry point and a `pause`/`unpause` pair. Most mutations check the pause flag before touching state, but pause-gating is not uniform — `channel` deliberately exempts its checkpoint, hold/release, and close lifecycle from pause (see the `channel` section below).
 
@@ -79,16 +86,27 @@ The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/l
 
 ## Deployed addresses (Testnet)
 
-| Contract | Address |
-|---|---|
-| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` |
-| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` |
-| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` |
-| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` |
+Each address below was built from the commit recorded in the **Commit** column — the short SHA of `HEAD` at deploy time. To answer "which commit's wasm is this address running?", read the hash here (or the matching `commit` field in `artifacts/addresses.json`) and check it out; no `git log` archaeology required.
+
+| Contract | Address | Commit |
+|---|---|---|
+| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` | `7a4b664` |
+| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` | `7a4b664` |
+| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` | `7a4b664` |
+| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` | `7a4b664` |
 
 Deployer: `GAEMG5TVLEIQYCY3XB4EJT742DIE3FQO53RSESSYJQUZIWZOJQIZATJS`
 
 Treasury signers (2-of-3 threshold): `GAEMG5TVLEIQYCY3XB4EJT742DIE3FQO53RSESSYJQUZIWZOJQIZATJS`, `GBRUR4UZHKPQ76S4S7X7INENL6QJ4UGNFIQ3F6VAYJQZRO3F4XBZAIND`, `GCP57AJNZIVVTPPSD4MJ2SQDMTN4QEAUP64U2OZ4HXSAU4O4A6NOWY2Z`
+
+### Recording provenance on redeploy
+
+Whenever a contract is redeployed, record the commit it was built from so the mapping above never rots:
+
+1. Note the short SHA of `HEAD` at deploy time: `git rev-parse --short HEAD`.
+2. Update the **Commit** column for the redeployed contract(s) in the table above.
+3. Update the matching `commit` field next to that network's addresses in `artifacts/addresses.json`.
+4. Optionally tag the deploy (`git tag testnet-deploy-YYYY-MM-DD`) so the exact build is also reachable by tag.
 
 ## Tech stack
 
@@ -141,9 +159,4 @@ Verified on testnet: a deploy without `initialize` leaves every admin call faili
 
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
 
-- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
-
-If you add a `pub fn` 
-
-/* … truncated 584 chars — edit only what you need near the top … */
+- **Autho

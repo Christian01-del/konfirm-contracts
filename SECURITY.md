@@ -25,20 +25,13 @@ Out of scope:
 
 We aim to acknowledge reports within 5 business days. This is a small, actively developed project, so response and fix times may vary. We will keep you informed of progress and credit reporters who want to be credited.
 
-## Repository Actions permissions
+## Branch protection on `main`
 
-The repository-level GitHub Actions gate must not allow arbitrary third-party actions to run. Maintainers should configure the repository's Actions permissions (Settings → Actions → General, or via the API) as follows:
-
-- Set `allowed_actions` to `selected` rather than `all`, with an explicit allowlist of the actions actually in use:
-  - `actions/checkout`
-  - `dtolnay/rust-toolchain`
-  - `rustsec/audit-check`
-- Enable `sha_pinning_required` once the workflow's action references are pinned to full commit SHAs (tracked separately).
-
-This is a platform-level setting and cannot be enforced from files in the repository; it must be applied through the repository settings or the API. Verify with:
+`main` is protected so that CI results gate every merge. The rule is declared in [`.github/branch-protection.json`](.github/branch-protection.json) and applied with:
 
 ```
-gh api repos/Konfirm-xyz/konfirm-contracts/actions/permissions
+gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/branches/main/protection \
+  --input .github/branch-protection.json
 ```
 
-`allowed_actions` should report `selected` and, once pinning is complete, `sha_pinning_required` should report `true`.
+It requires the `test` and `audit` CI checks to pass, requires a pull request with at least one approving review, and blocks force-pushes and branch deletion. Verify it with `gh api repos/Konfirm-xyz/konfirm-contracts/branches/main/protection`.
