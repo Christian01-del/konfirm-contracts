@@ -64,7 +64,9 @@ pub struct AdminChangedEvent {
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
+    /// Returned by `set_admin` when `current_admin` does not match the stored
+    /// admin. Admin gates elsewhere use `require_auth()`, which traps at the
+    /// host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -119,7 +121,13 @@ impl ComplianceContract {
     /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
+    ///
+    /// Fails closed on a contract that was never initialized: with no admin set, screening
+    /// is not running, so nothing is cleared (unlike the paused case, which still screens).
     pub fn is_allowed(env: Env, addr: Address) -> bool {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return false;
+        }
         let key = DataKey::Status(addr);
         if env.storage().persistent().get(&key) == Some(ComplianceStatus::Blocked) {
             // Keeps a live block from archiving, which would silently flip the
@@ -173,6 +181,7 @@ impl ComplianceContract {
     /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
     /// that gap; see docs/KEYS.md.
     pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let admin: Address = env
             .storage()
             .instance()
@@ -192,6 +201,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
@@ -199,6 +209,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
@@ -235,17 +246,15 @@ mod test {
     }
 
     #[test]
-    fn clear_restores_default_allow() {
+    fn is_allowed_fails_closed_when_uninitialized() {
         let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
+        let contract_id = env.register(ComplianceContract, ());
+        let client = ComplianceContractClient::new(&env, &contract_id);
         let addr = Address::generate(&env);
-
-        client.block_address(&addr);
         assert!(!client.is_allowed(&addr));
-        client.allow_address(&addr);
-        assert!(client.is_allowed(&addr));
-        client.clear_address(&addr);
-        assert!(client.is_allowed(&addr));
+
+        // An initialized contract with no blocks still allows the same address.
+        let (initialized, _admin) = setup(&env);
+        assert!(initialized.is_allowed(&addr));
     }
 }

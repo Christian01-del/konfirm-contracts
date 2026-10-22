@@ -13,14 +13,30 @@ use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contract
 const TTL_THRESHOLD: u32 = 100;
 const TTL_EXTEND_TO: u32 = 5_000_000;
 
+// Minimal cross-contract client for the compliance contract's `is_allowed`.
+// The compliance contract address is supplied by the admin at initialize time
+// so this contract can consult the blocklist before recording a payment.
+#[contractclient(name = "ComplianceClient")]
+pub trait ComplianceInterface {
+    fn is_allowed(env: Env, address: Address) -> bool;
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaymentRecord {
+    /// Address that received the funds.
     pub merchant: Address,
+    /// Address the funds came from.
     pub payer: Address,
+    /// Off-chain payment link this payment settles.
     pub link_id: u64,
+    /// Transferred amount in the asset's base units; always `> 0`.
     pub amount: i128,
+    /// Hash of the Stellar transaction that moved the funds. Each hash can be
+    /// recorded once; used to dedupe attestations.
     pub tx_hash: BytesN<32>,
+    /// Set by `mark_refunded` once the refund has been flagged. Bookkeeping
+    /// only — the refund transfer itself is not made by this contract.
     pub refunded: bool,
 }
 
@@ -62,6 +78,7 @@ enum DataKey {
     Payment(u64),
     Voided(u64),
     ByTxHash(BytesN<32>),
+    Compliance,
 }
 
 #[contracterror]
@@ -79,6 +96,7 @@ pub enum PaymentError {
     AlreadyVoided = 8,
     Voided = 9,
     DuplicateTxHash = 10,
+    ComplianceBlocked = 11,
 }
 
 #[contract]
@@ -102,6 +120,15 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Admin-only. Points this contract at the compliance contract consulted
+    /// by `record_payment`. Fails with `NotInitialized` before `initialize`.
+    pub fn set_compliance(env: Env, compliance: Address) -> Result<(), PaymentError> {
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Compliance, &compliance);
+        env.events().publish((symbol_short!("compliance"),), compliance);
+        Ok(())
+    }
+
     // Requires the stored admin's auth; `NotInitialized` before `initialize`.
     fn require_admin(env: &Env) -> Result<(), PaymentError> {
         let admin: Address = env
@@ -122,6 +149,21 @@ impl PaymentContract {
         Ok(())
     }
 
+    // Consults the configured compliance contract for both parties. If no
+    // compliance contract is configured, enforcement is skipped (advisory
+    // mode) so existing deployments keep working until the admin opts in.
+    fn require_allowed(env: &Env, merchant: &Address, payer: &Address) -> Result<(), PaymentError> {
+        let compliance: Address = match env.storage().instance().get(&DataKey::Compliance) {
+            Some(addr) => addr,
+            None => return Ok(()),
+        };
+        let client = ComplianceClient::new(env, &compliance);
+        if !client.is_allowed(&merchant.clone()) || !client.is_allowed(&payer.clone()) {
+            return Err(PaymentError::ComplianceBlocked);
+        }
+        Ok(())
+    }
+
     /// Admin-only, pause-gated. Writes an attestation that a payer -> merchant
     /// transfer already happened, and returns the new payment id. Does not
     /// move funds. The reconciler calls this only after verifying the transfer
@@ -135,7 +177,8 @@ impl PaymentContract {
     ///   hash can be recorded once.
     ///
     /// Fails with `InvalidAmount` if `amount <= 0`, `DuplicateTxHash` if
-    /// `tx_hash` was already recorded, and `Paused` while paused.
+    /// `tx_hash` was already recorded, `ComplianceBlocked` if either party is
+    /// blocked by the configured compliance contract, and `Paused` while paused.
     pub fn record_payment(
         env: Env,
         merchant: Address,
@@ -150,6 +193,7 @@ impl PaymentContract {
         if amount <= 0 {
             return Err(PaymentError::InvalidAmount);
         }
+        Self::require_allowed(&env, &merchant, &payer)?;
         if env.storage().persistent().has(&DataKey::ByTxHash(tx_hash.clone())) {
             return Err(PaymentError::DuplicateTxHash);
         }
