@@ -54,6 +54,9 @@ the current contracts returns it.
 | 10 | `NotClosing` | `finalize_close` on a channel that is not `Closing`. |
 | 11 | `Held` | `checkpoint` on a channel that is `Held` by admin. |
 | 12 | `ZeroDeposit` | `open_channel` or `top_up` with an amount `<= 0`. |
+| 13 | `TokenNotAllowed` | `open_channel` with a token the admin has not allowed. |
+| 14 | `TooManyOpenChannels` | `open_channel` when the payer already holds `MAX_OPEN_CHANNELS_PER_PAYER` (20) channels that are not `Closed`. |
+| 15 | `InvalidChallengePeriod` | `initialize` with `challenge_period_secs = 0`. The period is frozen at deploy time, so the contract rejects the one value that defeats the challenge mechanism. |
 
 An invalid payer signature in `checkpoint` traps the invocation (the Ed25519
 check is a host function) and does not return a code.
