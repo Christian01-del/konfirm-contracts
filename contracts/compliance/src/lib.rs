@@ -1,7 +1,7 @@
 #![no_std]
 
 use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, Env};
 
 const TTL_THRESHOLD: u32 = 100;
 const TTL_EXTEND_TO: u32 = 5_000_000;
@@ -23,13 +23,50 @@ enum ComplianceStatus {
     Cleared,
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct InitEvent {
+    #[topic]
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct BlockedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct AllowedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct ClearedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct AdminChangedEvent {
+    #[topic]
+    pub new_admin: Address,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
+    /// Returned by `set_admin` when `current_admin` does not match the stored
+    /// admin. Admin gates elsewhere use `require_auth()`, which traps at the
+    /// host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -61,7 +98,7 @@ impl ComplianceContract {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("init"),), admin);
+        InitEvent { admin }.publish(&env);
         Ok(())
     }
 
@@ -89,7 +126,13 @@ impl ComplianceContract {
     /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
+    ///
+    /// Fails closed on a contract that was never initialized: with no admin set, screening
+    /// is not running, so nothing is cleared (unlike the paused case, which still screens).
     pub fn is_allowed(env: Env, addr: Address) -> bool {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return false;
+        }
         let key = DataKey::Status(addr);
         if env.storage().persistent().get(&key) == Some(ComplianceStatus::Blocked) {
             // Keeps a live block from archiving, which would silently flip the
@@ -110,7 +153,7 @@ impl ComplianceContract {
         let key = DataKey::Status(addr.clone());
         env.storage().persistent().set(&key, &ComplianceStatus::Blocked);
         env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("blocked"),), addr);
+        BlockedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -123,7 +166,7 @@ impl ComplianceContract {
         let key = DataKey::Status(addr.clone());
         env.storage().persistent().set(&key, &ComplianceStatus::Cleared);
         env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("allowed"),), addr);
+        AllowedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -134,7 +177,7 @@ impl ComplianceContract {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().remove(&DataKey::Status(addr.clone()));
-        env.events().publish((symbol_short!("cleared"),), addr);
+        ClearedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -148,6 +191,7 @@ impl ComplianceContract {
     /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
     /// that gap; see docs/KEYS.md.
     pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let admin: Address = env
             .storage()
             .instance()
@@ -159,7 +203,7 @@ impl ComplianceContract {
         current_admin.require_auth();
         new_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        env.events().publish((symbol_short!("admin"),), new_admin);
+        AdminChangedEvent { new_admin }.publish(&env);
         Ok(())
     }
 
@@ -170,6 +214,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
@@ -178,6 +223,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
