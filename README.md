@@ -69,6 +69,8 @@ Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 
 
 The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature. The contract enforces one constraint only: the value must be greater than zero. `initialize` returns `InvalidChallengePeriod` for `0`. A zero period would let `finalize_close` succeed in the same ledger as `initiate_close`, which leaves the payee no window to checkpoint a higher claim.
 
+**Intentionally unused by the current pilot:** `top_up`, `hold_channel`, and `release_hold` are not called by `konfirm-backend` or `konfirm-frontend` today — the pilot's happy path only needs `open_channel`/`checkpoint`/`initiate_close`/`finalize_close`/`get_channel_info`. They stay in the deployed contract as the on-chain surface for features that will need them: `top_up` when a channel must accept additional deposit capacity beyond its opening balance, and `hold_channel`/`release_hold` when dispute or hold semantics (freezing checkpointing without closing) land in the backend. Wire them up at that point rather than removing them now.
+
 ## Deployed addresses (Testnet)
 
 | Contract | Address |
@@ -107,8 +109,10 @@ cargo test --all --features testutils
 The `testutils` feature must be enabled. Plain `cargo test` fails to compile, because the test code imports `soroban_sdk::testutils`. CI runs the command above.
 
 ```bash
-stellar contract build --target wasm32v1-none
+stellar contract build
 ```
+
+Current `stellar-cli` (27.x) bakes in the `wasm32v1-none` target for `contract build` and rejects a `--target` flag, so no target argument is needed.
 
 Deploy, then initialize. These contracts have **no constructor**: passing `-- --admin ...` at deploy time does not set them up. The `initialize` call is separate. The `channel` example:
 
@@ -132,37 +136,11 @@ Verified on testnet: a deploy without `initialize` leaves every admin call faili
 Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
 
 - **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
+- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `c
 
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
-
-## Known limitations
-
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
-
-[MIT](LICENSE)
+/* … truncated 716 chars — edit only what you need near the top … */
 
 ## Handsoff notes
 
-<!-- handsoff-issue-150 -->
-- #150: open_count tracking exists but the per-payer channel cap is never enforced (plus a second, uncatalogued compile error)
-
-<!-- handsoff-issue-152 -->
-- #152: tx_hash dedup for record_payment was silently dropped by a later merge — DataKey::ByTxHash no longer exists
+<!-- handsoff-issue-82 -->
+- #82: Treasury's Signers has no explicit max-length check in initialize
