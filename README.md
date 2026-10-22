@@ -195,4 +195,12 @@ contracts/
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
                 NOT authoritative: it is nev
 
-/* … truncated 863 chars — edit only what you need near the top … */
+[MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-154 -->
+- #154: Issue #27's fix never added the negative-amount test its own title promised
+
+<!-- handsoff-issue-155 -->
+- #155: check_pub_fn_auth.py is currently red on main — 7 violations, including a regressed doc tag from its own original fix

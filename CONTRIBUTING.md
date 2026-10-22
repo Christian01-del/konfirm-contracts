@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for working on the Konfirm contracts. Read [`docs/architecture.md`](docs/architecture.md) first for what each of the four contracts does and how they relate. The README covers the contract interfaces and deployed addresses.
+Thanks for working on the Konfirm contracts. Read [`docs/architecture.md`](docs/architecture.md) first for what each of the four contracts does and how they relate, plus the shared `konfirm-common` helper crate they all depend on. The README covers the contract interfaces and deployed addresses.
 
 ## Running the tests
 
-The four contracts are a single Cargo workspace. Run everything the way CI does:
+The four contracts and the shared `konfirm-common` crate are a single Cargo workspace. Run everything the way CI does:
 
 ```bash
 cargo test --all --features testutils
@@ -19,6 +19,7 @@ cargo test -p konfirm-compliance --features testutils
 cargo test -p konfirm-payment --features testutils
 cargo test -p konfirm-treasury --features testutils
 cargo test -p konfirm-channel --features testutils
+cargo test -p konfirm-common --features testutils
 ```
 
 Tests run against an in-process Soroban environment, not a live RPC endpoint.
