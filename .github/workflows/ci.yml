@@ -42,6 +42,15 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      # The org moved from konfirm-HQ to Konfirm-xyz; the stale name has
+      # regressed into links before. Fail the build if it reappears.
+      - name: Check for stale konfirm-HQ org references
+        run: |
+          if git grep -n -I 'konfirm-HQ' -- . ':!.github/workflows/ci.yml'; then
+            echo "::error::Found stale 'konfirm-HQ' org reference(s); use 'Konfirm-xyz' instead."
+            exit 1
+          fi
+
   audit:
     name: Security audit
     runs-on: ubuntu-latest
