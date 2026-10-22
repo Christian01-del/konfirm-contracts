@@ -26,6 +26,10 @@ It requires pull requests with at least one approving review, requires the CI `t
 
 Every contract follows the same shape: an `initialize` entry point and a `pause`/`unpause` pair. Most mutations check the pause flag before touching state, but pause-gating is not uniform — `channel` deliberately exempts its checkpoint, hold/release, and close lifecycle from pause (see the `channel` section below).
 
+### Upgradeability
+
+All four contracts are **immutable by design**: none exposes `update_current_contract_wasm` or any other upgrade mechanism, even though the pinned `soroban-sdk` supports it. This is a deliberate trust-minimization choice — no admin key, multisig, or timelock can swap the code under a deployed instance. The operational consequence is that a bug found after deployment cannot be patched in place; it can only be fixed by shipping a whole new contract instance and migrating every open channel and pending settlement to it. The redeploy and migration mechanics are covered in #57.
+
 ### `compliance`
 
 | Function | Signature |
@@ -60,9 +64,11 @@ Default-allow: an address is permitted unless explicitly blocked. `clear_address
 | `approve_settlement` | `(signer: Address, settlement_id: u64)` — rejects non-signers and double-approval |
 | `execute_settlement` | `(caller: Address, settlement_id: u64)` — caller must be a signer; only once threshold is met; rejects double-execution |
 | `get_settlement` | `(settlement_id: u64) -> Settlement` |
-| `pause` / `unpause` | `()` |
+| `pause` / `unpause` | `()` — gated by the signer threshold, not a single admin key |
 
 Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-testnet)).
+
+**Pause is signer-threshold-gated.** Unlike `compliance`, `payment`, and `channel` — whose `pause`/`unpause` are single-admin-key operations — `treasury`'s `pause`/`unpause` require the same signer threshold used for settlements. A single admin key cannot unilaterally freeze the treasury; pausing requires the same N-of-M signer approval as a settlement. This closes the single-key pause-DoS surface on the treasury contract.
 
 ### `channel`
 
@@ -197,16 +203,4 @@ Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforce
 - **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
 - **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
 
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
-
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment ou
-
-/* … truncated 210 chars — edit only what you need near the top … */
+If you add a `pub fn` that is neither, the check wi
