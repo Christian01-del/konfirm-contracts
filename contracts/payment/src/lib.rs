@@ -1,7 +1,7 @@
 #![no_std]
 
 use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
-use soroban_sdk::{contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, BytesN, Env};
 
 // This contract is an attestation layer, not an escrow. Funds for a checkout
 // payment move directly payer -> merchant muxed address via a classic
@@ -38,6 +38,35 @@ pub struct PaymentRecord {
     /// Set by `mark_refunded` once the refund has been flagged. Bookkeeping
     /// only — the refund transfer itself is not made by this contract.
     pub refunded: bool,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitEvent {
+    #[topic]
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentRecordedEvent {
+    #[topic]
+    pub merchant: Address,
+    pub id: u64,
+    pub link_id: u64,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentRefundedEvent {
+    pub payment_id: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentVoidedEvent {
+    pub payment_id: u64,
 }
 
 #[contracttype]
@@ -87,7 +116,7 @@ impl PaymentContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::NextId, &1u64);
-        env.events().publish((symbol_short!("init"),), admin);
+        InitEvent { admin: admin.clone() }.publish(&env);
         Ok(())
     }
 
@@ -184,7 +213,7 @@ impl PaymentContract {
         env.storage().persistent().extend_ttl(&DataKey::Payment(id), TTL_THRESHOLD, TTL_EXTEND_TO);
         env.storage().persistent().set(&DataKey::ByTxHash(tx_hash.clone()), &id);
         env.storage().persistent().extend_ttl(&DataKey::ByTxHash(tx_hash), TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("recorded"), merchant), (id, link_id, amount));
+        PaymentRecordedEvent { merchant: merchant.clone(), id, link_id, amount }.publish(&env);
         Ok(id)
     }
 
@@ -211,7 +240,7 @@ impl PaymentContract {
         record.refunded = true;
         env.storage().persistent().set(&DataKey::Payment(payment_id), &record);
         env.storage().persistent().extend_ttl(&DataKey::Payment(payment_id), TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("refunded"),), payment_id);
+        PaymentRefundedEvent { payment_id }.publish(&env);
         Ok(())
     }
 
@@ -235,7 +264,7 @@ impl PaymentContract {
             return Err(PaymentError::AlreadyRefunded);
         }
         env.storage().persistent().set(&DataKey::Voided(payment_id), &true);
-        env.events().publish((symbol_short!("voided"),), payment_id);
+        PaymentVoidedEvent { payment_id }.publish(&env);
         Ok(())
     }
 

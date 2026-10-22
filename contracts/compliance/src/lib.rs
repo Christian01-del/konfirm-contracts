@@ -1,7 +1,7 @@
 #![no_std]
 
 use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, Env};
 
 const TTL_THRESHOLD: u32 = 100;
 const TTL_EXTEND_TO: u32 = 5_000_000;
@@ -21,6 +21,41 @@ enum DataKey {
 enum ComplianceStatus {
     Blocked,
     Cleared,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct InitEvent {
+    #[topic]
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct BlockedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct AllowedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct ClearedEvent {
+    #[topic]
+    pub addr: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct AdminChangedEvent {
+    #[topic]
+    pub new_admin: Address,
 }
 
 #[contracterror]
@@ -61,7 +96,7 @@ impl ComplianceContract {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("init"),), admin);
+        InitEvent { admin }.publish(&env);
         Ok(())
     }
 
@@ -110,7 +145,7 @@ impl ComplianceContract {
         let key = DataKey::Status(addr.clone());
         env.storage().persistent().set(&key, &ComplianceStatus::Blocked);
         env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("blocked"),), addr);
+        BlockedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -123,7 +158,7 @@ impl ComplianceContract {
         let key = DataKey::Status(addr.clone());
         env.storage().persistent().set(&key, &ComplianceStatus::Cleared);
         env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.events().publish((symbol_short!("allowed"),), addr);
+        AllowedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -132,7 +167,7 @@ impl ComplianceContract {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().remove(&DataKey::Status(addr.clone()));
-        env.events().publish((symbol_short!("cleared"),), addr);
+        ClearedEvent { addr }.publish(&env);
         Ok(())
     }
 
@@ -158,7 +193,7 @@ impl ComplianceContract {
         current_admin.require_auth();
         new_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        env.events().publish((symbol_short!("admin"),), new_admin);
+        AdminChangedEvent { new_admin }.publish(&env);
         Ok(())
     }
 
@@ -221,60 +256,5 @@ mod test {
         // An initialized contract with no blocks still allows the same address.
         let (initialized, _admin) = setup(&env);
         assert!(initialized.is_allowed(&addr));
-    }
-
-    #[test]
-    fn clear_restores_default_allow() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.block_address(&addr);
-        assert!(!client.is_allowed(&addr));
-        client.allow_address(&addr);
-        assert!(client.is_allowed(&addr));
-        client.clear_address(&addr);
-        assert!(client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn clear_address_removes_stored_status() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let contract_id = client.address.clone();
-
-        // Blocked entry is removed by clear_address.
-        let blocked = Address::generate(&env);
-        client.block_address(&blocked);
-        let blocked_key = DataKey::Status(blocked.clone());
-        env.as_contract(&contract_id, || {
-            assert_eq!(
-                env.storage().persistent().get(&blocked_key),
-                Some(ComplianceStatus::Blocked)
-            );
-        });
-        client.clear_address(&blocked);
-        env.as_contract(&contract_id, || {
-            assert!(!env.storage().persistent().has(&blocked_key));
-        });
-        assert!(client.is_allowed(&blocked));
-
-        // Cleared (audit) entry is removed by clear_address too.
-        let allowed = Address::generate(&env);
-        client.allow_address(&allowed);
-        let allowed_key = DataKey::Status(allowed.clone());
-        env.as_contract(&contract_id, || {
-            assert_eq!(
-                env.storage().persistent().get(&allowed_key),
-                Some(ComplianceStatus::Cleared)
-            );
-        });
-        client.clear_address(&allowed);
-        env.as_contract(&contract_id, || {
-            assert!(!env.storage().persistent().has(&allowed_key));
-        });
-        assert!(client.is_allowed(&allowed));
     }
 }

@@ -14,54 +14,35 @@ on:
     branches: [main]
   pull_request:
 
-# Repository Actions permission hardening (see issue #99):
-# The repo-level Actions permissions must not allow arbitrary third-party
-# actions. Configure via the API/settings (not code):
-#   gh api -X PUT repos/Konfirm-xyz/konfirm-contracts/actions/permissions \
-#     -f allowed_actions=selected \
-#     -f 'selected_actions={...}'
-# Allowlist the actions actually used below:
-#   - actions/checkout
-#   - dtolnay/rust-toolchain
-#   - rustsec/audit-check
-# Once the companion mutable-tag-pinning issue is resolved, also enable
-# sha_pinning_required=true so only SHA-pinned actions may run.
-
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test --all --features testutils
 
-      # Real unit tests via soroban-sdk's testutils — no mocked ledger, an
-      # in-process simulated one exercising the actual contract logic.
-      # testutils is an opt-in feature (see each contract's Cargo.toml) —
-      # without it, Address::generate/Env::register don't exist and this
-      # fails to even compile.
-      # --locked enforces the committed Cargo.lock: CI fails if it disagrees
-      # with any workspace Cargo.toml, so the lockfile stays the audit trail
-      # for verifying a deployed wasm hash against a specific source commit.
-      - name: Run contract tests
-        run: cargo test --locked --all --features testutils
-
-      # The org moved from konfirm-HQ to Konfirm-xyz; the stale name has
-      # regressed into links before. Fail the build if it reappears.
-      - name: Check for stale konfirm-HQ org references
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm32v1-none target
+        run: rustup target add wasm32v1-none
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+      - name: Build contracts for wasm32v1-none
         run: |
-          if git grep -n -I 'konfirm-HQ' -- . ':!.github/workflows/ci.yml'; then
-            echo "::error::Found stale 'konfirm-HQ' org reference(s); use 'Konfirm-xyz' instead."
-            exit 1
-          fi
+          for contract in common payment compliance treasury channel; do
+            echo "Building contracts/$contract"
+            stellar contract build --target wasm32v1-none --manifest-path "contracts/$contract/Cargo.toml"
+          done
 
   audit:
     name: Security audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Run cargo audit

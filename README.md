@@ -161,46 +161,31 @@ stellar contract invoke --id <CONTRACT_ID> \
 
 Each contract's `initialize` takes its own arguments: `compliance` and `payment` take `--admin`; `treasury` takes `--admin --token --signers --threshold`; `channel` takes `--admin --challenge_period_secs`. Calling it twice fails with `AlreadyInitialized`, which is the protection.
 
-Verified on testnet: a deploy without `initialize` leaves every admin call failing with `NotInitialized` (error 2).
+### `treasury` deploy + initialize
 
-## Deploying to mainnet
+`treasury::initialize(env, admin: Address, token: Address, signers: Vec<Address>, threshold: u32)` takes a `Vec<Address>` for `signers`. The Stellar CLI parses that as a **JSON array of quoted addresses** — a bare space-separated list will not work:
 
-Mainnet deployment is real, near-term work: `konfirm-backend`'s [mainnet spec](https://github.com/Konfirm-xyz/konfirm-backend/blob/main/docs/specs/06-mainnet.md) lists "deployed by us, after the audit" as a named pre-launch item, and its `stellar-network.ts` already has a parallel mainnet preset waiting to receive real contract IDs. This repo owns and deploys the contracts, so the procedure lives here. Both repos must agree on the addresses produced by this section.
-
-**Do not deploy to mainnet before the audit is complete.** The steps below are the documented procedure for that post-audit deploy.
-
-The only difference from the testnet flow above is the network flag: use `--network mainnet` (the Stellar CLI's name for the public network; `pubnet` is not a valid value). Everything else — build, deploy, then a separate `initialize` — is identical.
-
-## Cross-contract calls require a same-Env integration test
-
-No contract currently calls another contract's address, and no test registers two contracts in the same `Env`. That is correct today: the pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer it is built toward.
-
-**Tripwire (backlog):** the moment any contract gains a call into another contract's address — e.g. `channel`/`treasury` wiring for the netting-engine work, or `compliance` gating `payment`/`treasury` on-chain — a same-`Env`, two-contract integration test **must land in the same PR**. The test must assert the cross-contract call path behaves correctly, including the failure path (e.g. what happens when the called contract is paused or panics mid-call). Do not add cross-contract dependencies to a `Cargo.toml` or introduce cross-contract calls without that test.
-
-## Project structure
+```bash
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/konfirm_treasury.wasm \
+  --source deployer --network testnet
+# -> prints the contract id, <CONTRACT_ID>
 
 stellar contract invoke --id <CONTRACT_ID> \
-  --source deployer --network mainnet \
+  --source deployer --network testnet \
   -- initialize \
-     --admin <admin_address> \
-     --token <MAINNET_USDC_SAC> \
-     --signers '[<signer1>,<signer2>,<signer3>]' \
-     --threshold 2
+  --admin <admin_address> \
+  --token <token_address> \
+  --signers '["G...signer1","G...signer2","G...signer3"]' \
+  --threshold 2
 ```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
 
-[MIT](LICENSE)
+Note the single quotes wrapping the JSON array (so the shell passes it through verbatim) and the double quotes around each `G...` address inside it. `--threshold` must be `<=` the number of signers; the deployed instance uses 3 signers with `--threshold 2`.
 
-## Handsoff notes
+**Sourcing `--token` on testnet.** `--token` is the SAC (Stellar Asset Contract) address of the asset the treasury settles in. For a throwaway test token, deploy one and use the printed contract id:
 
-<!-- handsoff-issue-154 -->
-- #154: Issue #27's fix never added the negative-amount test its own title promised
+```bash
+stellar contract asset deploy \
+  --a
 
-<!-- handsoff-issue-155 -->
-- #155: check_pub_fn_auth.py is currently red on main — 7 violations, including a regressed doc tag from its own original fix
+/* … truncated 1696 chars — edit only what you need near the top … */
