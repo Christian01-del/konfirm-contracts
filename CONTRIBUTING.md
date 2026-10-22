@@ -60,8 +60,15 @@ The convention is not yet fully applied. These functions are permissionless or s
 
 Fixing these is a documentation change. If you touch one of these functions, bring its doc comment up to the convention in the same change.
 
+## Cross-contract calls
+
+Today no contract calls into another contract's address, and no contract's `Cargo.toml` depends on another. That is correct for the current pilot, which moves value with plain Stellar classic payments. Do not add a cross-contract dependency or call speculatively.
+
+**Tripwire (issue #62):** the moment any contract gains a call into another contract's address, a same-Env integration test must land in the same PR. The test must deploy both contracts into one `Env` and assert the cross-contract call path behaves correctly, including the failure path — for example, what happens when the called contract is paused or panics mid-call. A cross-contract call without that test is not mergeable.
+
 ## Pull requests
 
 - Keep changes focused on one contract or one concern.
 - Run `cargo test --all --features testutils` before you open a PR. CI runs the same command, along with a RustSec audit.
 - Any change to authorization, pause behaviour, or fund movement needs a test that exercises the rejected path, not only the success path.
+- Any change that introduces a cross-contract call needs a same-Env, two-contract integration test covering both the success and failure paths (see "Cross-contract calls").

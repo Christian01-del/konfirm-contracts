@@ -43,8 +43,25 @@ Error types still differ per contract. `konfirm-common` defines its own `CommonE
 
 None of the four contracts is called by the live checkout or cash-out flow yet. Today's pilot moves value with plain Stellar classic payments. See the README's "Known limitations".
 
+## Cross-contract calls require a same-Env integration test
+
+Today no contract calls another contract's address, and that is correct for the current phase. This is a forward-looking tripwire, not a current gap: a channel-backed netting engine will likely wire `channel` / `treasury` (and possibly `compliance` gating) together on-chain, at which point cross-contract behavior becomes a real surface that must be tested before it ships.
+
+**Rule:** when any contract gains a call into another contract's address, a same-Env, two-contract integration test must land in the same PR. The test must deploy both contracts into one `Env` and assert the cross-contract call path behaves correctly, including the failure path (for example, what happens if the called contract is paused or panics mid-call). Do not add cross-contract dependencies to a `Cargo.toml` or invent cross-contract calls ahead of that work.
+
 ## Things to know before changing anything
 
 - **Deploy and initialize are separate steps.** The contracts have no constructor. A deployed but uninitialized contract rejects admin calls with `NotInitialized`. See the README's deploy section.
-- **The challenge period is a deployment parameter.** `channel` takes `challenge_period_secs` at `initialize` and does not hard-code it. The deployed Testnet instance uses 86400 seconds.
+- **The challenge period is a deployment parameter.** `channel` takes `challenge_period_secs` at `initialize` and does not hard-code it. The deployed Testnet instance uses 86400 seconds. The contract rejects `0` with `InvalidChallengePeriod`. With `0`, `finalize_close` succeeds in the same ledger as `initiate_close`, so the payee gets no window to checkpoint a higher claim.
 - **Treasury threshold is fixed at initialization.** The Testnet instance is 2-of-3. Changing it means a new deployment.
+
+## Code scanning (CodeQL) — tracked gap
+
+There is no CodeQL or other code-scanning workflow in this repo today. `.github/workflows/` contains only `ci.yml`, and `gh api repos/Konfirm-xyz/konfirm-contracts/code-scanning/alerts` returns `404 Not Found` with `"no analysis found"`.
+
+This is a deliberate, tooling-maturity-justified gap rather than an oversight. CodeQL's Rust support is comparatively immature: it lacks the default-setup/autobuild parity that mature languages have, and `soroban-sdk`'s heavy macro use is a known weak spot for dataflow-based analyzers. Adding it now would produce noisy, incomplete results.
+
+**Revisit by: 2026-06-30** (tracker: issue #96). At that point, re-evaluate whether CodeQL's Rust/Soroban coverage has matured enough to add a `codeql.yml` workflow. If coverage is still weak but some scanning is wanted, the alternatives are:
+
+- CodeQL with `language: rust` in beta mode, accepting noisy/incomplete results as better than nothing.
+- Lighter-weight static analysis: `cargo-geiger` for unsafe-usage auditing, and clippy's security-focused lints (already partially covered by `ci.yml`).

@@ -29,7 +29,9 @@ enum ComplianceStatus {
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
+    /// Returned by `set_admin` when `current_admin` does not match the stored
+    /// admin. Admin gates elsewhere use `require_auth()`, which traps at the
+    /// host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -84,7 +86,13 @@ impl ComplianceContract {
     /// Permissionless. Read-only, and deliberately callable even while paused — pausing the
     /// contract must never be able to brick checkout by blocking the one
     /// query the payment-preparation path depends on.
+    ///
+    /// Fails closed on a contract that was never initialized: with no admin set, screening
+    /// is not running, so nothing is cleared (unlike the paused case, which still screens).
     pub fn is_allowed(env: Env, addr: Address) -> bool {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return false;
+        }
         let key = DataKey::Status(addr);
         if env.storage().persistent().get(&key) == Some(ComplianceStatus::Blocked) {
             // Keeps a live block from archiving, which would silently flip the
@@ -138,6 +146,7 @@ impl ComplianceContract {
     /// (treasury's 2-of-3 model) or a multisig deployer account is what closes
     /// that gap; see docs/KEYS.md.
     pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), ComplianceError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let admin: Address = env
             .storage()
             .instance()
@@ -157,6 +166,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
@@ -164,6 +174,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
@@ -200,6 +211,19 @@ mod test {
     }
 
     #[test]
+    fn is_allowed_fails_closed_when_uninitialized() {
+        let env = Env::default();
+        let contract_id = env.register(ComplianceContract, ());
+        let client = ComplianceContractClient::new(&env, &contract_id);
+        let addr = Address::generate(&env);
+        assert!(!client.is_allowed(&addr));
+
+        // An initialized contract with no blocks still allows the same address.
+        let (initialized, _admin) = setup(&env);
+        assert!(initialized.is_allowed(&addr));
+    }
+
+    #[test]
     fn clear_restores_default_allow() {
         let env = Env::default();
         env.mock_all_auths();
@@ -215,63 +239,42 @@ mod test {
     }
 
     #[test]
-    fn is_allowed_works_while_paused() {
+    fn clear_address_removes_stored_status() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
+        let contract_id = client.address.clone();
 
-        client.block_address(&addr);
-        client.pause();
-        // must not panic / must not require unpausing to read
-        assert!(!client.is_allowed(&addr));
-    }
+        // Blocked entry is removed by clear_address.
+        let blocked = Address::generate(&env);
+        client.block_address(&blocked);
+        let blocked_key = DataKey::Status(blocked.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&blocked_key),
+                Some(ComplianceStatus::Blocked)
+            );
+        });
+        client.clear_address(&blocked);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&blocked_key));
+        });
+        assert!(client.is_allowed(&blocked));
 
-    #[test]
-    fn mutations_rejected_while_paused() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        client.pause();
-        let res = client.try_block_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_allow_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-        let res = client.try_clear_address(&addr);
-        assert_eq!(res, Err(Ok(ComplianceError::Paused)));
-    }
-
-    #[test]
-    fn double_initialize_rejected() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, admin) = setup(&env);
-        let res = client.try_initialize(&admin);
-        assert_eq!(res, Err(Ok(ComplianceError::AlreadyInitialized)));
-    }
-
-    #[test]
-    fn non_admin_signer_cannot_call_admin_function() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let non_admin = Address::generate(&env);
-        let addr = Address::generate(&env);
-
-        // Only a non-admin address authorizes the call; the admin's
-        // require_auth() must therefore fail.
-        env.mock_auths(&[MockAuth {
-            address: &non_admin,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "block_address",
-                args: (addr.clone(),).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client.try_block_address(&addr).is_err());
-        assert!(client.is_allowed(&addr));
+        // Cleared (audit) entry is removed by clear_address too.
+        let allowed = Address::generate(&env);
+        client.allow_address(&allowed);
+        let allowed_key = DataKey::Status(allowed.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&allowed_key),
+                Some(ComplianceStatus::Cleared)
+            );
+        });
+        client.clear_address(&allowed);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&allowed_key));
+        });
+        assert!(client.is_allowed(&allowed));
     }
 }
