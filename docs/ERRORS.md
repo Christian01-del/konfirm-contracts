@@ -53,7 +53,16 @@ the current contracts returns it.
 | 9 | `ChallengeNotElapsed` | `finalize_close` before `closing_at + challenge period`. |
 | 10 | `NotClosing` | `finalize_close` on a channel that is not `Closing`. |
 | 11 | `Held` | `checkpoint` on a channel that is `Held` by admin. |
-| 12 | `ZeroDeposit` | `open_channel` or `top_up` with an amount `<= 0`. |
+| 12 | `ZeroDeposit` | `open_channel` with a `deposit <= 0`. |
+| 13 | `ZeroAmount` | `top_up` with an `amount <= 0`. |
+
+`ZeroAmount` and `ZeroDeposit` are the same semantic class: a non-positive
+money-like `i128` was rejected. `payment` and `treasury` use `ZeroAmount` for
+their generic amount guards; `channel` uses `ZeroAmount` for `top_up` (whose
+parameter is named `amount`) and keeps `ZeroDeposit` only for `open_channel`,
+where the rejected value is the channel's initial deposit. A caller detecting
+"non-positive amount rejected" uniformly across contracts should treat
+`ZeroAmount` as the canonical variant and map `channel`'s `ZeroDeposit` to it.
 
 An invalid payer signature in `checkpoint` traps the invocation (the Ed25519
 check is a host function) and does not return a code.
