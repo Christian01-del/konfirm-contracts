@@ -1,3 +1,6 @@
-/target
-.soroban
-artifacts/addresses.json
+# Rust build artifacts
+target/
+**/target/
+
+# Soroban test snapshot dumps (regenerated on every cargo test run)
+test_snapshots/
