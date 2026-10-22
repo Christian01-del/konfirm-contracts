@@ -161,5 +161,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 ## Handsoff notes
 
-<!-- handsoff-issue-160 -->
-- #160: channel's token-allowlist fix has no surviving setter — open_channel is now permanently bricked for every token
+<!-- handsoff-issue-150 -->
+- #150: open_count tracking exists but the per-payer channel cap is never enforced (plus a second, uncatalogued compile error)
+
+<!-- handsoff-issue-152 -->
+- #152: tx_hash dedup for record_payment was silently dropped by a later merge — DataKey::ByTxHash no longer exists

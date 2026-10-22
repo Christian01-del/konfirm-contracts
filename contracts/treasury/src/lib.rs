@@ -1,6 +1,6 @@
 #![no_std]
 
-use konfirm_common::{require_not_paused, set_paused, CommonError};
+use konfirm_common::{require_admin, require_not_paused, set_paused, CommonError};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
 const TTL_THRESHOLD: u32 = 100;
@@ -122,13 +122,9 @@ impl TreasuryContract {
     }
 
     // Requires the stored admin's auth; `NotInitialized` before `initialize`.
+    // Delegates to the shared `konfirm_common::require_admin` helper.
     fn require_admin(env: &Env) -> Result<(), TreasuryError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(TreasuryError::NotInitialized)?;
-        admin.require_auth();
+        require_admin(env, &DataKey::Admin)?;
         Ok(())
     }
 
@@ -216,12 +212,7 @@ impl TreasuryContract {
         if settlement.status != SettlementStatus::Pending {
             return Err(TreasuryError::NotPending);
         }
-        let threshold: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Threshold)
-            .ok_or(TreasuryError::NotInitialized)?;
-        if settlement.approvals.len() < threshold {
+        if (settlement.approvals.len() as u32) < Self::threshold(&env) {
             return Err(TreasuryError::ThresholdNotMet);
         }
 
@@ -230,8 +221,8 @@ impl TreasuryContract {
             .instance()
             .get(&DataKey::Token)
             .ok_or(TreasuryError::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&env.current_contract_address(), &settlement.merchant, &settlement.amount);
+        let client = token::Client::new(&env, &token_addr);
+        client.transfer(&env.current_contract_address(), &settlement.merchant, &settlement.amount);
 
         settlement.status = SettlementStatus::Executed;
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
@@ -240,8 +231,8 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Admin-only. Cancels a `Pending` settlement so it can no longer execute.
-    /// Fails with `NotFound` and `NotPending`.
+    /// Admin-only. Cancels a `Pending` settlement without moving funds. Fails
+    /// with `NotFound` and `NotPending` if the settlement is not pending.
     pub fn cancel_settlement(env: Env, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -261,20 +252,29 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Admin-only. Pauses or unpauses the contract. While paused, the
-    /// signer-gated entry points (`propose_settlement`, `approve_settlement`,
-    /// `execute_settlement`) fail with `Paused`.
-    pub fn set_paused(env: Env, paused: bool) -> Result<(), TreasuryError> {
-        Self::require_admin(&env)?;
-        set_paused(&env, &DataKey::Paused, paused)?;
+    /// Admin-only. Pauses the contract: signer actions fail with `Paused`
+    /// until `unpause`. Delegates to the shared `konfirm_common::set_paused`.
+    pub fn pause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, true)?;
         Ok(())
     }
 
-    /// Read-only. Returns the settlement with `settlement_id`, or `NotFound`.
-    pub fn get_settlement(env: Env, settlement_id: u64) -> Result<Settlement, TreasuryError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Settlement(settlement_id))
-            .ok_or(TreasuryError::NotFound)
+    /// Admin-only. Resumes normal operation after `pause`. Delegates to the
+    /// shared `konfirm_common::set_paused`.
+    pub fn unpause(env: Env) -> Result<(), TreasuryError> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        set_paused(&env, &DataKey::Admin, &DataKey::Paused, false)?;
+        Ok(())
+    }
+
+    /// Returns the current approval threshold.
+    pub fn threshold(env: &Env) -> u32 {
+        env.storage().instance().get(&DataKey::Threshold).unwrap_or(0)
+    }
+
+    /// Returns whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 }

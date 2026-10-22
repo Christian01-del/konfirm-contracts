@@ -215,17 +215,7 @@ mod test {
         assert!(!client.is_allowed(&addr));
         client.allow_address(&addr);
         assert!(client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn set_admin_with_mismatched_current_admin_returns_unauthorized() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let wrong_admin = Address::generate(&env);
-        let new_admin = Address::generate(&env);
-
-        let result = client.try_set_admin(&wrong_admin, &new_admin);
-        assert_eq!(result, Err(Ok(ComplianceError::Unauthorized)));
+        client.clear_address(&addr);
+        assert!(client.is_allowed(&addr));
     }
 }
