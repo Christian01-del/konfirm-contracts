@@ -1,7 +1,7 @@
 #![no_std]
 
 use konfirm_common::{require_not_paused, set_paused, CommonError};
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
+use soroban_sdk::{contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
 
 const TTL_THRESHOLD: u32 = 100;
 const TTL_EXTEND_TO: u32 = 5_000_000;
@@ -41,6 +41,7 @@ enum DataKey {
     Threshold,
     NextId,
     Settlement(u64),
+    Compliance,
 }
 
 #[contracterror]
@@ -114,6 +115,17 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Admin-only. Sets the compliance contract consulted by
+    /// `propose_settlement` and `execute_settlement` to reject blocked
+    /// addresses before funds move. Fails with `NotInitialized` before
+    /// `initialize`.
+    pub fn set_compliance(env: Env, compliance: Address) -> Result<(), TreasuryError> {
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Compliance, &compliance);
+        env.events().publish((symbol_short!("compliance"),), compliance);
+        Ok(())
+    }
+
     // Requires `who`'s auth and that `who` is in the signer set (`NotSigner`).
     fn require_signer(env: &Env, who: &Address) -> Result<(), TreasuryError> {
         who.require_auth();
@@ -129,21 +141,30 @@ impl TreasuryContract {
     }
 
     // Requires the stored admin's auth; `NotInitialized` before `initialize`.
+    // Delegates to the shared `konfirm_common::require_admin` helper.
     fn require_admin(env: &Env) -> Result<(), TreasuryError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(TreasuryError::NotInitialized)?;
-        admin.require_auth();
+        require_admin(env, &DataKey::Admin)?;
+        Ok(())
+    }
+
+    // Rejects `who` if the configured compliance contract reports it blocked.
+    // No-op when no compliance contract has been configured.
+    fn require_allowed(env: &Env, who: &Address) -> Result<(), TreasuryError> {
+        if let Some(compliance) = env.storage().instance().get::<DataKey, Address>(&DataKey::Compliance) {
+            let client = ComplianceClient::new(env, &compliance);
+            if !client.is_allowed(who) {
+                return Err(TreasuryError::ComplianceBlocked);
+            }
+        }
         Ok(())
     }
 
     /// Signer-only, pause-gated. Opens a new `Pending` settlement paying
     /// `amount` to `merchant` and returns its id. The proposer's approval
     /// counts as the first of the `threshold` required. Does not move funds.
-    /// Fails with `NotSigner`, `ZeroAmount` if `amount <= 0`, and `Paused`
-    /// while paused.
+    /// Fails with `NotSigner`, `ZeroAmount` if `amount <= 0`, `ComplianceBlocked`
+    /// if the merchant is blocked by the configured compliance contract, and
+    /// `Paused` while paused.
     pub fn propose_settlement(
         env: Env,
         proposer: Address,
@@ -156,6 +177,7 @@ impl TreasuryContract {
         if amount <= 0 {
             return Err(TreasuryError::ZeroAmount);
         }
+        Self::require_allowed(&env, &merchant)?;
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -272,9 +294,10 @@ impl TreasuryContract {
     /// settlement's approval count reaches the threshold; fails with
     /// `ThresholdNotMet` before then. Executing does not count as an approval.
     /// Transfers `amount` of the payout token from the treasury to the
-    /// merchant, then marks the settlement `Executed`. If the transfer traps,
-    /// the whole call reverts and the settlement stays `Pending`. Also fails
-    /// with `NotSigner`, `NotFound`, `NotPending`, and `Paused` while paused.
+    /// merchant, then marks the settlement `Executed`. If the transfer fails,
+    /// the call returns `TransferFailed` and the whole call reverts, leaving
+    /// the settlement `Pending`. Also fails with `NotSigner`, `NotFound`,
+    /// `NotPending`, and `Paused` while paused.
     pub fn execute_settlement(env: Env, caller: Address, settlement_id: u64) -> Result<(), TreasuryError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_signer(&env, &caller)?;
