@@ -2,6 +2,10 @@
 
 Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/konfirm-backend), a non-custodial payment processor on Stellar. All four are deployed to Testnet (addresses below); none are currently called by the live checkout or cash-out flow in `konfirm-backend` — today's pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer that path is built toward.
 
+## Repository hygiene
+
+"Automatically delete head branches" is enabled on this repository (`delete_branch_on_merge: true`), so merged PR branches are removed automatically and stale branches don't accumulate. If you need to keep a branch after merge for audit-trail reasons, restore it from the merge commit rather than disabling the setting.
+
 ## Contracts
 
 | Contract | Purpose |
@@ -67,7 +71,9 @@ Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-t
 
 Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload, so a signature from this contract can never be replayed against a different one.
 
-The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature — the contract itself only enforces whatever value it was initialized with.
+The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature. The contract enforces one constraint only: the value must be greater than zero. `initialize` returns `InvalidChallengePeriod` for `0`. A zero period would let `finalize_close` succeed in the same ledger as `initiate_close`, which leaves the payee no window to checkpoint a higher claim.
+
+**Intentionally unused by the current pilot:** `top_up`, `hold_channel`, and `release_hold` are not called by `konfirm-backend` or `konfirm-frontend` today — the pilot's happy path only needs `open_channel`/`checkpoint`/`initiate_close`/`finalize_close`/`get_channel_info`. They stay in the deployed contract as the on-chain surface for features that will need them: `top_up` when a channel must accept additional deposit capacity beyond its opening balance, and `hold_channel`/`release_hold` when dispute or hold semantics (freezing checkpointing without closing) land in the backend. Wire them up at that point rather than removing them now.
 
 ## Deployed addresses (Testnet)
 
@@ -107,8 +113,10 @@ cargo test --all --features testutils
 The `testutils` feature must be enabled. Plain `cargo test` fails to compile, because the test code imports `soroban_sdk::testutils`. CI runs the command above.
 
 ```bash
-stellar contract build --target wasm32v1-none
+stellar contract build
 ```
+
+Current `stellar-cli` (27.x) bakes in the `wasm32v1-none` target for `contract build` and rejects a `--target` flag, so no target argument is needed.
 
 Deploy, then initialize. These contracts have **no constructor**: passing `-- --admin ...` at deploy time does not set them up. The `initialize` call is separate. The `channel` example:
 
@@ -145,17 +153,11 @@ contracts/
   treasury/     multisig settlement
   channel/      escrow-backed payment channels
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is never regenerated automatically and can silently go stale after a redeploy.
-                Use the [Deployed addresses](#deployed-addresses-testnet) table above as the source of truth.
-```
+                NOT authoritative: it is nev
 
-## Known limitations
+/* … truncated 715 chars — edit only what you need near the top … */
 
-- Not yet called from `konfirm-backend`'s live checkout/cash-out path — the pilot uses plain classic Stellar payments today.
-- `channel`'s tiered challenge-period design (shorter periods for lower-value channels, longer for higher-value ones) exists as an operational recommendation, not contract-enforced logic — `initialize` takes one value per channel deployment.
-- No integration tests against a live Soroban RPC endpoint; test coverage is unit-level via `testutils` only.
-
-## License
+## Handsoff notes
 
 [MIT](LICENSE)
 

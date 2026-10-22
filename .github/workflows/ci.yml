@@ -45,3 +45,21 @@ jobs:
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Repo hygiene: keep delete_branch_on_merge enabled so merged PR head
+  # branches are auto-deleted instead of accumulating. Idempotent — only
+  # touches this single setting, leaving merge/rebase/auto-merge and branch
+  # protection untouched.
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    steps:
+      - name: Enable delete_branch_on_merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH repos/${{ github.repository }} \
+            -F delete_branch_on_merge=true
+          gh api repos/${{ github.repository }} --jq .delete_branch_on_merge
