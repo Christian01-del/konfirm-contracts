@@ -218,4 +218,44 @@ mod test {
         client.clear_address(&addr);
         assert!(client.is_allowed(&addr));
     }
+
+    #[test]
+    fn clear_address_removes_stored_status() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let contract_id = client.address.clone();
+
+        // Blocked entry is removed by clear_address.
+        let blocked = Address::generate(&env);
+        client.block_address(&blocked);
+        let blocked_key = DataKey::Status(blocked.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&blocked_key),
+                Some(ComplianceStatus::Blocked)
+            );
+        });
+        client.clear_address(&blocked);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&blocked_key));
+        });
+        assert!(client.is_allowed(&blocked));
+
+        // Cleared (audit) entry is removed by clear_address too.
+        let allowed = Address::generate(&env);
+        client.allow_address(&allowed);
+        let allowed_key = DataKey::Status(allowed.clone());
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                env.storage().persistent().get(&allowed_key),
+                Some(ComplianceStatus::Cleared)
+            );
+        });
+        client.clear_address(&allowed);
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().persistent().has(&allowed_key));
+        });
+        assert!(client.is_allowed(&allowed));
+    }
 }
