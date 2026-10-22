@@ -15,7 +15,7 @@ Four Soroban smart contracts backing [Konfirm](https://github.com/konfirm-HQ/kon
 | `treasury` | 2-of-3 multisig settlement: propose → approve → execute |
 | `channel` | Escrow-backed payment channels with checkpointing, a configurable challenge period, and cooperative or unilateral close |
 
-Every contract follows the same shape: an `initialize` entry point, a `pause`/`unpause` pair, and mutations that check the pause flag before touching state.
+Every contract follows the same shape: an `initialize` entry point and a `pause`/`unpause` pair. Most mutations check the pause flag before touching state, but pause-gating is not uniform — `channel` deliberately exempts its checkpoint, hold/release, and close lifecycle from pause (see the `channel` section below).
 
 ### `compliance`
 
@@ -69,7 +69,9 @@ Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-t
 | `set_admin` | `(current_admin: Address, new_admin: Address)` — both must authorize; not pause-gated |
 | `pause` / `unpause` | `()` |
 
-Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload, so a signature from this contract can never be replayed against a different one.
+**Pause scope.** Pause exists to stop new exposure, not to freeze funds someone can already prove is owed to them. Only `open_channel` and `top_up` check the pause flag. `checkpoint`, `hold_channel`, `release_hold`, `initiate_close`, and `finalize_close` are deliberately not pause-gated — pausing must never block a withdrawal or close that a party can already prove is owed. This matches the module doc in `contracts/channel/src/lib.rs`.
+
+Signed checkpoint messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload. The full payload is `DOMAIN_TAG || channel_id (u64 BE) || nonce (u64 BE) || cumulative_amount (i128 BE)` — it does **not** include the contract's own address. Because `DOMAIN_TAG` is a compile-time constant identical across every deployment of the same source, this prevents replay across `(channel_id, nonce, cumulative_amount)` within a single deployed instance, but it does **not** prevent replay of a signature against a different deployment of the same contract. Binding `env.current_contract_address()` into the payload would close that gap; that change is tracked separately.
 
 The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature. The contract enforces one constraint only: the value must be greater than zero. `initialize` returns `InvalidChallengePeriod` for `0`. A zero period would let `finalize_close` succeed in the same ledger as `initiate_close`, which leaves the payee no window to checkpoint a higher claim.
 
@@ -142,26 +144,6 @@ Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforce
 - **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
 - **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
 
-If you add a `pub fn` that is neither, the check will fail. Either add the auth check or document the function as permissionless and say why.
+If you add a `pub fn` 
 
-## Project structure
-
-```
-contracts/
-  compliance/   allow/deny-list screening
-  payment/      payment attestation + refund tracking
-  treasury/     multisig settlement
-  channel/      escrow-backed payment channels
-artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
-                NOT authoritative: it is nev
-
-/* … truncated 715 chars — edit only what you need near the top … */
-
-## Handsoff notes
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-100 -->
-- #100: Disable unused, empty wiki feature on repo
+/* … truncated 584 chars — edit only what you need near the top … */
