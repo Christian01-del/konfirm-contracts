@@ -7,8 +7,10 @@ Also fail if any tracked file's deployed contract address disagrees with
 README.md's "Deployed Addresses" table (issue #54: stale artifacts/addresses.json).
 """
 
+import json
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
