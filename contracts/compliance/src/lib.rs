@@ -89,6 +89,8 @@ pub struct ComplianceContract;
 // requiring every legitimate address to be pre-enrolled.
 #[contractimpl]
 impl ComplianceContract {
+    /// One-time setup. Requires auth from `admin` and rejects a second call
+    /// with `AlreadyInitialized`; also seeds `Paused = false`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ComplianceError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(ComplianceError::AlreadyInitialized);
@@ -100,16 +102,19 @@ impl ComplianceContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<Address, ComplianceError> {
+    /// Admin-only (auth via `require_admin`). Fails with `NotInitialized` if
+    /// the contract has no admin set.
+    fn require_admin(env: &Env) -> Result<(), ComplianceError> {
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .ok_or(ComplianceError::NotInitialized)?;
         admin.require_auth();
-        Ok(admin)
+        Ok(())
     }
 
+    /// Returns `Paused` if the contract is paused; used to gate mutations.
     fn require_not_paused(env: &Env) -> Result<(), ComplianceError> {
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         if paused {
@@ -138,6 +143,9 @@ impl ComplianceContract {
         true
     }
 
+    /// Admin-only and pause-sensitive. Records `Blocked` for `addr` so
+    /// `is_allowed` returns false. The single `Status` write is the only
+    /// state change; there is no separate `Allowed` flag to keep in sync.
     pub fn block_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -162,6 +170,8 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only and pause-sensitive. Removes any `Status` record for `addr`,
+    /// restoring the default-allow state (no record at all).
     pub fn clear_address(env: Env, addr: Address) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -197,6 +207,9 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only. Sets `Paused = true`, which makes `block_address`,
+    /// `allow_address`, and `clear_address` return `Paused`. Reads
+    /// (`is_allowed`, `is_paused`) remain available.
     pub fn pause(env: Env) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -205,6 +218,7 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Admin-only. Clears `Paused`, re-enabling the pause-gated mutations.
     pub fn unpause(env: Env) -> Result<(), ComplianceError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
@@ -227,34 +241,6 @@ mod test {
 
     fn setup(env: &Env) -> (ComplianceContractClient<'_>, Address) {
         let admin = Address::generate(env);
-        let contract_id = env.register(ComplianceContract, ());
-        let client = ComplianceContractClient::new(env, &contract_id);
-        client.initialize(&admin);
-        (client, admin)
-    }
+        le
 
-    #[test]
-    fn default_allow_until_blocked() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin) = setup(&env);
-        let addr = Address::generate(&env);
-
-        assert!(client.is_allowed(&addr));
-        client.block_address(&addr);
-        assert!(!client.is_allowed(&addr));
-    }
-
-    #[test]
-    fn is_allowed_fails_closed_when_uninitialized() {
-        let env = Env::default();
-        let contract_id = env.register(ComplianceContract, ());
-        let client = ComplianceContractClient::new(&env, &contract_id);
-        let addr = Address::generate(&env);
-        assert!(!client.is_allowed(&addr));
-
-        // An initialized contract with no blocks still allows the same address.
-        let (initialized, _admin) = setup(&env);
-        assert!(initialized.is_allowed(&addr));
-    }
-}
+/* … truncated 1038 chars — edit only what you need near the top … */

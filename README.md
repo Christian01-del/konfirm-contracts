@@ -188,4 +188,9 @@ Note the single quotes wrapping the JSON array (so the shell passes it through v
 stellar contract asset deploy \
   --a
 
-/* … truncated 1696 chars — edit only what you need near the top … */
+[MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-50 -->
+- #50: claim_payload makes 7 host calls to build a 47-byte buffer on the hottest path

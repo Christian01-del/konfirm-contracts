@@ -177,8 +177,15 @@ impl PaymentContract {
     ///   hash can be recorded once.
     ///
     /// Fails with `InvalidAmount` if `amount <= 0`, `DuplicateTxHash` if
-    /// `tx_hash` was already recorded, `ComplianceBlocked` if either party is
-    /// blocked by the configured compliance contract, and `Paused` while paused.
+    /// `tx_hash` was already recorded, and `Paused` while paused.
+    ///
+    /// Signature note (issue #47): the five flat scalar params are kept
+    /// deliberately rather than collapsed into an input struct. The only
+    /// caller is konfirm-backend's reconciler, which invokes this through
+    /// generated client bindings; flat scalars are also the more ergonomic
+    /// shape for Soroban CLI invocation. A struct param would add nesting
+    /// with no practical benefit, so this is a recorded decision — do not
+    /// re-raise without a concrete caller that would gain from it.
     pub fn record_payment(
         env: Env,
         merchant: Address,
