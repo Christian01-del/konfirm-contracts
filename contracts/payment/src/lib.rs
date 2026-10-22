@@ -77,6 +77,7 @@ enum DataKey {
     NextId,
     Payment(u64),
     Voided(u64),
+    Refunded(u64),
     ByTxHash(BytesN<32>),
     Compliance,
 }
@@ -229,25 +230,26 @@ impl PaymentContract {
     /// contract. Fails with `NotFound` for an unknown id, `AlreadyRefunded` if
     /// already flagged, `Voided` if the payment was voided, and `Paused` while
     /// paused.
+    ///
+    /// The refund flag lives under its own key (`DataKey::Refunded`) so this
+    /// only writes the changed bit instead of re-serializing the whole
+    /// `PaymentRecord`.
     pub fn mark_refunded(env: Env, payment_id: u64) -> Result<(), PaymentError> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        let mut record: PaymentRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Payment(payment_id))
-            .ok_or(PaymentError::NotFound)?;
-        if record.refunded {
+        if !env.storage().persistent().has(&DataKey::Payment(payment_id)) {
+            return Err(PaymentError::NotFound);
+        }
+        if Self::is_refunded_flag(&env, payment_id) {
             return Err(PaymentError::AlreadyRefunded);
         }
         if Self::is_voided_flag(&env, payment_id) {
             return Err(PaymentError::Voided);
         }
-        record.refunded = true;
-        env.storage().persistent().set(&DataKey::Payment(payment_id), &record);
-        env.storage().persistent().extend_ttl(&DataKey::Payment(payment_id), TTL_THRESHOLD, TTL_EXTEND_TO);
-        PaymentRefundedEvent { payment_id }.publish(&env);
+        env.storage().persistent().set(&DataKey::Refunded(payment_id), &true);
+        env.storage().persistent().extend_ttl(&DataKey::Refunded(payment_id), TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.events().publish((symbol_short!("refunded"),), payment_id);
         Ok(())
     }
 
@@ -259,15 +261,13 @@ impl PaymentContract {
     pub fn void_payment(env: Env, payment_id: u64) -> Result<(), PaymentError> {
         Self::require_admin(&env)?;
         Self::require_not_paused(&env)?;
-        let record: PaymentRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Payment(payment_id))
-            .ok_or(PaymentError::NotFound)?;
+        if !env.storage().persistent().has(&DataKey::Payment(payment_id)) {
+            return Err(PaymentError::NotFound);
+        }
         if Self::is_voided_flag(&env, payment_id) {
             return Err(PaymentError::AlreadyVoided);
         }
-        if record.refunded {
+        if Self::is_refunded_flag(&env, payment_id) {
             return Err(PaymentError::AlreadyRefunded);
         }
         env.storage().persistent().set(&DataKey::Voided(payment_id), &true);
@@ -278,6 +278,11 @@ impl PaymentContract {
     // Raw voided flag; `false` for unknown ids. Callers check existence first.
     fn is_voided_flag(env: &Env, payment_id: u64) -> bool {
         env.storage().persistent().get(&DataKey::Voided(payment_id)).unwrap_or(false)
+    }
+
+    // Raw refunded flag; `false` for unknown ids. Callers check existence first.
+    fn is_refunded_flag(env: &Env, payment_id: u64) -> bool {
+        env.storage().persistent().get(&DataKey::Refunded(payment_id)).unwrap_or(false)
     }
 
     /// Permissionless. Read-only and not pause-gated. Returns whether the

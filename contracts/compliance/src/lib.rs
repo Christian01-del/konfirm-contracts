@@ -243,4 +243,18 @@ mod test {
         let admin = Address::generate(env);
         le
 
-/* … truncated 1038 chars — edit only what you need near the top … */
+    #[test]
+    fn clear_restores_default_allow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let addr = Address::generate(&env);
+
+        client.block_address(&addr);
+        assert!(!client.is_allowed(&addr));
+        client.allow_address(&addr);
+        assert!(client.is_allowed(&addr));
+        client.clear_address(&addr);
+        assert!(client.is_allowed(&addr));
+    }
+}

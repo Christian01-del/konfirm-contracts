@@ -192,5 +192,5 @@ stellar contract asset deploy \
 
 ## Handsoff notes
 
-<!-- handsoff-issue-50 -->
-- #50: claim_payload makes 7 host calls to build a 47-byte buffer on the hottest path
+<!-- handsoff-issue-38 -->
+- #38: Suspected: open_channel never validates payee != payer
