@@ -67,7 +67,7 @@ Deployed with a 2-of-3 threshold (see [Deployed addresses](#deployed-addresses-t
 
 Signed messages are domain-separated with `DOMAIN_TAG = b"KONFIRM_CHAN_V1"` (15 bytes) prefixed onto the signing payload, so a signature from this contract can never be replayed against a different one.
 
-The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature — the contract itself only enforces whatever value it was initialized with.
+The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/longer periods for lower/higher-value channels are a deployment decision, not a contract feature. The contract enforces one constraint only: the value must be greater than zero. `initialize` returns `InvalidChallengePeriod` for `0`. A zero period would let `finalize_close` succeed in the same ledger as `initiate_close`, which leaves the payee no window to checkpoint a higher claim.
 
 ## Deployed addresses (Testnet)
 
