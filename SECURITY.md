@@ -25,14 +25,20 @@ Out of scope:
 
 We aim to acknowledge reports within 5 business days. This is a small, actively developed project, so response and fix times may vary. We will keep you informed of progress and credit reporters who want to be credited.
 
-## Third-party GitHub App access
+## Repository Actions permissions
 
-This section records the deliberate, reviewed decisions about third-party GitHub Apps installed on the `Konfirm-xyz` organization, so that org-wide grants are a recorded choice rather than silent default scope.
+The repository-level GitHub Actions gate must not allow arbitrary third-party actions to run. Maintainers should configure the repository's Actions permissions (Settings → Actions → General, or via the API) as follows:
 
-### Drips Wave (`drips-wave`)
+- Set `allowed_actions` to `selected` rather than `all`, with an explicit allowlist of the actions actually in use:
+  - `actions/checkout`
+  - `dtolnay/rust-toolchain`
+  - `rustsec/audit-check`
+- Enable `sha_pinning_required` once the workflow's action references are pinned to full commit SHAs (tracked separately).
 
-- **App:** Drips Wave (`app_slug: drips-wave`, `app_id: 2617547`), a legitimate OSS contribution/bounty platform (drips.network). It is **not** suspected-malicious.
-- **Installation:** Installed on the `Konfirm-xyz` organization with `repository_selection: "all"`.
-- **Permissions:** `members:read`, `issues:write`, `pull_requests:write`, `metadata:read`.
-- **Decision:** The org-wide installation is intentional. Wave is used across the organization's repositories to manage contribution and bounty workflows, so it is granted access to all repositories rather than a per-repo selection. This includes this funds-custody contracts repository.
-- **Review:** This grant is reviewed periodically (at least every 6 months, and whenever the app's permissions or repository selection change) to confirm it is still needed and still scoped as intended. If Wave stops being used org-wide, its repository access should be narrowed to only the repositories that actively use it, excluding this and any other contract/funds repositories.
+This is a platform-level setting and cannot be enforced from files in the repository; it must be applied through the repository settings or the API. Verify with:
+
+```
+gh api repos/Konfirm-xyz/konfirm-contracts/actions/permissions
+```
+
+`allowed_actions` should report `selected` and, once pinning is complete, `sha_pinning_required` should report `true`.

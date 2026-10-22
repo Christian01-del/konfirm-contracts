@@ -59,6 +59,26 @@ The convention is not yet fully applied. These functions are permissionless or s
 
 Fixing these is a documentation change. If you touch one of these functions, bring its doc comment up to the convention in the same change.
 
+## Repository Actions permissions
+
+Repository-level Actions permissions are a platform gate that applies regardless of what a workflow file contains. They must not be left at the permissive default (`allowed_actions: "all"`), which would let an arbitrary third-party action run even if a future workflow edit introduced one.
+
+Maintainers must configure the repository so that:
+
+- `allowed_actions` is `"selected"`, with an explicit allowlist of the actions actually in use:
+  - `actions/checkout`
+  - `dtolnay/rust-toolchain`
+  - `rustsec/audit-check`
+- `sha_pinning_required` is enabled once the companion issue about pinning workflow action references to commit SHAs is resolved.
+
+Verify the current state with:
+
+```bash
+gh api repos/Konfirm-xyz/konfirm-contracts/actions/permissions
+```
+
+`allowed_actions` must not be `"all"`. After changing the setting, confirm CI still runs green. This is a repository-settings change, not a code change; do not attempt to encode it in the workflow file.
+
 ## Pull requests
 
 - Keep changes focused on one contract or one concern.

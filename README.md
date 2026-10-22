@@ -159,5 +159,9 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 ## Handsoff notes
 
-<!-- handsoff-issue-110 -->
-- #110: Test treasury::initialize's upper threshold boundary
+[MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-100 -->
+- #100: Disable unused, empty wiki feature on repo
