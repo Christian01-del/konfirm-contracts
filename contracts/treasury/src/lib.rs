@@ -140,13 +140,9 @@ impl TreasuryContract {
     }
 
     // Requires the stored admin's auth; `NotInitialized` before `initialize`.
+    // Delegates to the shared `konfirm_common::require_admin` helper.
     fn require_admin(env: &Env) -> Result<(), TreasuryError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(TreasuryError::NotInitialized)?;
-        admin.require_auth();
+        require_admin(env, &DataKey::Admin)?;
         Ok(())
     }
 

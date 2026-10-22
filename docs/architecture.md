@@ -36,5 +36,5 @@ None of the four contracts is called by the live checkout or cash-out flow yet. 
 ## Things to know before changing anything
 
 - **Deploy and initialize are separate steps.** The contracts have no constructor. A deployed but uninitialized contract rejects admin calls with `NotInitialized`. See the README's deploy section.
-- **The challenge period is a deployment parameter.** `channel` takes `challenge_period_secs` at `initialize` and does not hard-code it. The deployed Testnet instance uses 86400 seconds.
+- **The challenge period is a deployment parameter.** `channel` takes `challenge_period_secs` at `initialize` and does not hard-code it. The deployed Testnet instance uses 86400 seconds. The contract rejects `0` with `InvalidChallengePeriod`. With `0`, `finalize_close` succeeds in the same ledger as `initiate_close`, so the payee gets no window to checkpoint a higher claim.
 - **Treasury threshold is fixed at initialization.** The Testnet instance is 2-of-3. Changing it means a new deployment.
