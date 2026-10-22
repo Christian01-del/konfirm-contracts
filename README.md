@@ -94,14 +94,14 @@ The deployed instance uses `challenge_period_secs = 86400` (24 hours). Shorter/l
 
 ## Deployed addresses (Testnet)
 
-Each address below was built from the commit recorded in the **Commit** column — the short SHA of `HEAD` at deploy time. To answer "which commit's wasm is this address running?", read the hash here (or the matching `commit` field in `artifacts/addresses.json`) and check it out; no `git log` archaeology required.
+This table is the **single source of truth** for deployed contract addresses. Any other file that records a deployed address (e.g. a local `artifacts/addresses.json`) is non-authoritative and is checked against this table by `scripts/check_deployed_addresses.py` in CI — a mismatch fails the build.
 
-| Contract | Address | Commit |
-|---|---|---|
-| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` | `7a4b664` |
-| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` | `7a4b664` |
-| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` | `7a4b664` |
-| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` | `7a4b664` |
+| Contract | Address |
+|---|---|
+| Compliance | `CDDVLE2DZQAYFY3Z2Z74TUNNPC4ROUACSBXOB2P64IT75EZFAQXSRSXY` |
+| Payment | `CCYRA6JT2L4NS5FG4B5TP52JPCGCPYSP7M6LUDUY2QA37V5UBXWJBRHV` |
+| Treasury | `CD77HPVBGIRYQGXC4JVCEO35X6FKFFJ2C4EZ63EQCOXGR6OL4TVEPZ2T` |
+| Channel | `CDS2Y4CQMQWFLCG5GHVKX7UIXHYPM6IJDJZTEXSASSHGHLESGLGLNPL6` |
 
 Deployer: `GAEMG5TVLEIQYCY3XB4EJT742DIE3FQO53RSESSYJQUZIWZOJQIZATJS`
 
@@ -171,26 +171,14 @@ stellar contract deploy \
   --source deployer --network testnet
 # -> prints the contract id, <CONTRACT_ID>
 
-stellar contract invoke --id <CONTRACT_ID> \
-  --source deployer --network testnet \
-  -- initialize \
-  --admin <admin_address> \
-  --token <token_address> \
-  --signers '["G...signer1","G...signer2","G...signer3"]' \
-  --threshold 2
 ```
-
-Note the single quotes wrapping the JSON array (so the shell passes it through verbatim) and the double quotes around each `G...` address inside it. `--threshold` must be `<=` the number of signers; the deployed instance uses 3 signers with `--threshold 2`.
-
-**Sourcing `--token` on testnet.** `--token` is the SAC (Stellar Asset Contract) address of the asset the treasury settles in. For a throwaway test token, deploy one and use the printed contract id:
-
-```bash
-stellar contract asset deploy \
-  --a
-
-[MIT](LICENSE)
-
-## Handsoff notes
-
-<!-- handsoff-issue-38 -->
-- #38: Suspected: open_channel never validates payee != payer
+contracts/
+  compliance/   allow/deny-list screening
+  payment/      payment attestation + refund tracking
+  treasury/     multisig settlement
+  channel/      escrow-backed payment channels
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is never regenerated automatically and can go stale. The Deployed addresses table above is the source of truth;
+                scripts/check_deployed_addresses.py fails CI if any tracked file disagrees with it.
+scripts/        repo checks (pub fn auth, deployed-address consistency)
+```
