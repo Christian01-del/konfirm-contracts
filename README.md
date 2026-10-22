@@ -158,3 +158,8 @@ artifacts/      local deployment output (gitignored — contains only public add
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-167 -->
+- #167: payment::unpause is missing the TTL extension that payment::pause (and every other contract's unpause) has
