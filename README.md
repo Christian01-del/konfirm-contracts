@@ -124,8 +124,8 @@ Whenever a contract is redeployed, record the commit it was built from so the ma
 
 ## Prerequisites
 
-- Rust (stable)
-- The `wasm32v1-none` target — **not** `wasm32-unknown-unknown`. `rust-toolchain.toml` currently lists `wasm32-unknown-unknown`, but `soroban-sdk 27` rejects that target on Rust 1.82+; install the correct one explicitly:
+- Rust — the exact toolchain is pinned in `rust-toolchain.toml` (`channel = "1.82.0"`). `rustup` installs it automatically on a fresh checkout; no manual override is needed.
+- The `wasm32v1-none` target — **not** `wasm32-unknown-unknown`. `soroban-sdk 27` rejects `wasm32-unknown-unknown` on Rust 1.82+, so `rust-toolchain.toml` declares `wasm32v1-none` and `rustup` installs it for you. If you manage toolchains manually:
 
   ```bash
   rustup target add wasm32v1-none
@@ -185,22 +185,12 @@ stellar contract invoke --id <CONTRACT_ID> \
      --signers '[<signer1>,<signer2>,<signer3>]' \
      --threshold 2
 ```
+contracts/
+  compliance/   allow/deny-list screening
+  payment/      payment attestation + refund tracking
+  treasury/     multisig settlement
+  channel/      escrow-backed payment channels
+artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
+                NOT authoritative: it is nev
 
-### Mainnet USDC SAC is a required, verified parameter
-
-`treasury --token` must be the **mainnet** USDC Stellar Asset Contract address. This is a required parameter and must be verified before running `initialize`:
-
-- **Never reuse the testnet USDC SAC.** The testnet and mainnet SACs are different contract IDs; initializing `treasury` with the testnet SAC on mainnet would point settlement at an asset that does not exist there, and `initialize` cannot be re-run (`AlreadyInitialized`).
-- Confirm the value against the canonical mainnet USDC issuer/SAC published by Circle / Stellar before deploying, and record the exact address used in the deploy notes so `konfirm-backend`'s mainnet preset can be updated to match.
-- Double-check the `--network` flag on both the `deploy` and `invoke` commands — a testnet SAC paired with `--network mainnet` (or vice versa) is the failure mode this checklist exists to catch.
-
-After deploying, update `konfirm-backend`'s `stellar-network.ts` mainnet preset with the four new contract IDs, and keep this README's deployed-addresses section in sync.
-
-## Authorization convention
-
-Every `pub fn` in `contracts/*/src/lib.rs` must do one of two things. CI enforces this with `python3 scripts/check_pub_fn_auth.py`, and the check fails the build otherwise:
-
-- **Authorized:** its body calls `require_auth`, `require_signer`, or `require_admin` (directly or via a helper of that name).
-- **Permissionless:** its doc comment has a `/// Permissionless` line explaining why no check is needed. Examples: `channel::finalize_close`, `channel::checkpoint` (authorized by the payer's signature), and read-only getters.
-
-If you add a `pub fn` that is neither, the check wi
+/* … truncated 715 chars — edit only what you need near the top … */

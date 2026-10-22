@@ -1,6 +1,6 @@
-/target
-temp_auto_push.bat
-.soroban
-artifacts/addresses.json
-.gitignore
-branch_structure.json
+# Rust build artifacts
+target/
+**/target/
+
+# Soroban test snapshot dumps (regenerated on every cargo test run)
+test_snapshots/
