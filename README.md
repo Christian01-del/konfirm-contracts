@@ -161,5 +161,5 @@ artifacts/      local deployment output (gitignored — contains only public add
 
 ## Handsoff notes
 
-<!-- handsoff-issue-167 -->
-- #167: payment::unpause is missing the TTL extension that payment::pause (and every other contract's unpause) has
+<!-- handsoff-issue-160 -->
+- #160: channel's token-allowlist fix has no surviving setter — open_channel is now permanently bricked for every token

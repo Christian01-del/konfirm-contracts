@@ -29,7 +29,9 @@ enum ComplianceStatus {
 pub enum ComplianceError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    /// Never returned: admin gates use `require_auth()`, which traps at the host before this can be produced. Code 3 stays reserved for ABI stability.
+    /// Returned by `set_admin` when `current_admin` does not match the stored
+    /// admin. Admin gates elsewhere use `require_auth()`, which traps at the
+    /// host before this can be produced. Code 3 stays reserved for ABI stability.
     Unauthorized = 3,
     Paused = 4,
 }
@@ -158,6 +160,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
         Ok(())
     }
 
@@ -165,6 +168,7 @@ impl ComplianceContract {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), ());
         Ok(())
     }
 
@@ -211,7 +215,17 @@ mod test {
         assert!(!client.is_allowed(&addr));
         client.allow_address(&addr);
         assert!(client.is_allowed(&addr));
-        client.clear_address(&addr);
-        assert!(client.is_allowed(&ad
+    }
 
-/* … truncated 2050 chars — edit only what you need near the top … */
+    #[test]
+    fn set_admin_with_mismatched_current_admin_returns_unauthorized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _admin) = setup(&env);
+        let wrong_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        let result = client.try_set_admin(&wrong_admin, &new_admin);
+        assert_eq!(result, Err(Ok(ComplianceError::Unauthorized)));
+    }
+}
