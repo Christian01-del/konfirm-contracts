@@ -33,6 +33,12 @@ Each contract also has an `initialize` entry point (one-shot, rejects a second c
 
 None of the four contracts is called by the live checkout or cash-out flow yet. Today's pilot moves value with plain Stellar classic payments. See the README's "Known limitations".
 
+## Cross-contract calls require a same-Env integration test
+
+Today no contract calls another contract's address, and that is correct for the current phase. This is a forward-looking tripwire, not a current gap: a channel-backed netting engine will likely wire `channel` / `treasury` (and possibly `compliance` gating) together on-chain, at which point cross-contract behavior becomes a real surface that must be tested before it ships.
+
+**Rule:** when any contract gains a call into another contract's address, a same-Env, two-contract integration test must land in the same PR. The test must deploy both contracts into one `Env` and assert the cross-contract call path behaves correctly, including the failure path (for example, what happens if the called contract is paused or panics mid-call). Do not add cross-contract dependencies to a `Cargo.toml` or invent cross-contract calls ahead of that work.
+
 ## Things to know before changing anything
 
 - **Deploy and initialize are separate steps.** The contracts have no constructor. A deployed but uninitialized contract rejects admin calls with `NotInitialized`. See the README's deploy section.

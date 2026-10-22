@@ -311,15 +311,10 @@ impl TreasuryContract {
         if settlement.status != SettlementStatus::Pending {
             return Err(TreasuryError::NotPending);
         }
-        let threshold: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Threshold)
-            .ok_or(TreasuryError::NotInitialized)?;
+        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap_or(0);
         if settlement.approvals.len() < threshold {
             return Err(TreasuryError::ThresholdNotMet);
         }
-
         let token_addr: Address = env
             .storage()
             .instance()
@@ -327,7 +322,6 @@ impl TreasuryContract {
             .ok_or(TreasuryError::NotInitialized)?;
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&env.current_contract_address(), &settlement.merchant, &settlement.amount);
-
         settlement.status = SettlementStatus::Executed;
         env.storage().persistent().set(&DataKey::Settlement(settlement_id), &settlement);
         env.storage().persistent().extend_ttl(&DataKey::Settlement(settlement_id), TTL_THRESHOLD, TTL_EXTEND_TO);
@@ -335,14 +329,18 @@ impl TreasuryContract {
         Ok(())
     }
 
-    /// Admin-only. Pauses or unpauses the contract. While paused,
-    /// `propose_settlement`, `approve_settlement`, and `execute_settlement`
-    /// fail with `Paused`. `cancel_settlement` and `sweep_expired_settlement`
-    /// remain available so pending entries can always be cleaned up.
-    pub fn set_paused(env: Env, paused: bool) -> Result<(), TreasuryError> {
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    /// Admin-only. Pauses the contract; while paused, `propose_settlement`,
+    /// `approve_settlement` and `execute_settlement` fail with `Paused`.
+    pub fn pause(env: Env) -> Result<(), TreasuryError> {
         Self::require_admin(&env)?;
-        set_paused(&env, &DataKey::Paused, paused);
+        set_paused(&env, &DataKey::Paused, true);
+        Ok(())
+    }
+
+    /// Admin-only. Unpauses the contract, restoring the pause-gated entry points.
+    pub fn unpause(env: Env) -> Result<(), TreasuryError> {
+        Self::require_admin(&env)?;
+        set_paused(&env, &DataKey::Paused, false);
         Ok(())
     }
 
@@ -352,5 +350,103 @@ impl TreasuryContract {
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
             .ok_or(TreasuryError::NotFound)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::{IntoVal, Symbol};
+
+    fn setup(env: &Env) -> (Address, Address, Address, Address, TreasuryContractClient) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let signer1 = Address::generate(env);
+        let signer2 = Address::generate(env);
+        let token = Address::generate(env);
+        let contract_id = env.register(TreasuryContract, ());
+        let client = TreasuryContractClient::new(env, &contract_id);
+        let signers = vec![env, signer1.clone(), signer2.clone()];
+        client.initialize(&admin, &token, &signers, &2u32);
+        (admin, signer1, signer2, token, client)
+    }
+
+    #[test]
+    fn propose_settlement_assigns_distinct_increasing_ids() {
+        let env = Env::default();
+        let (_admin, signer1, _signer2, _token, client) = setup(&env);
+        let merchant = Address::generate(&env);
+
+        let id1 = client.propose_settlement(&signer1, &merchant, &100i128);
+        let id2 = client.propose_settlement(&signer1, &merchant, &200i128);
+
+        assert_ne!(id1, id2);
+        assert!(id2 > id1);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+
+        let s1 = client.get_settlement(&id1);
+        let s2 = client.get_settlement(&id2);
+        assert_eq!(s1.amount, 100i128);
+        assert_eq!(s2.amount, 200i128);
+    }
+
+    #[test]
+    fn pause_blocks_then_unpause_restores_propose() {
+        let env = Env::default();
+        let (_admin, signer1, _signer2, _token, client) = setup(&env);
+        let merchant = Address::generate(&env);
+
+        client.pause();
+        let paused = client.try_propose_settlement(&signer1, &merchant, &100i128);
+        assert_eq!(paused, Err(Ok(TreasuryError::Paused)));
+
+        client.unpause();
+        let id = client.propose_settlement(&signer1, &merchant, &100i128);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn non_admin_cannot_pause() {
+        let env = Env::default();
+        let (_admin, signer1, _signer2, _token, client) = setup(&env);
+        let contract_id = client.address.clone();
+
+        // Selective auth: only the non-admin signer authorizes, not the admin.
+        env.mock_auths(&[MockAuth {
+            address: &signer1,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "pause",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_pause();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn non_signer_cannot_propose() {
+        let env = Env::default();
+        let (_admin, _signer1, _signer2, _token, client) = setup(&env);
+        let contract_id = client.address.clone();
+        let outsider = Address::generate(&env);
+        let merchant = Address::generate(&env);
+
+        env.mock_auths(&[MockAuth {
+            address: &outsider,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "propose_settlement",
+                args: (outsider.clone(), merchant.clone(), 100i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_propose_settlement(&outsider, &merchant, &100i128);
+        assert_eq!(result, Err(Ok(TreasuryError::NotSigner)));
     }
 }

@@ -171,11 +171,13 @@ Mainnet deployment is real, near-term work: `konfirm-backend`'s [mainnet spec](h
 
 The only difference from the testnet flow above is the network flag: use `--network mainnet` (the Stellar CLI's name for the public network; `pubnet` is not a valid value). Everything else — build, deploy, then a separate `initialize` — is identical.
 
-```bash
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/konfirm_treasury.wasm \
-  --source deployer --network mainnet
-# -> prints the contract id, <CONTRACT_ID>
+## Cross-contract calls require a same-Env integration test
+
+No contract currently calls another contract's address, and no test registers two contracts in the same `Env`. That is correct today: the pilot moves value with plain Stellar classic payments, and these contracts are the on-chain layer it is built toward.
+
+**Tripwire (backlog):** the moment any contract gains a call into another contract's address — e.g. `channel`/`treasury` wiring for the netting-engine work, or `compliance` gating `payment`/`treasury` on-chain — a same-`Env`, two-contract integration test **must land in the same PR**. The test must assert the cross-contract call path behaves correctly, including the failure path (e.g. what happens when the called contract is paused or panics mid-call). Do not add cross-contract dependencies to a `Cargo.toml` or introduce cross-contract calls without that test.
+
+## Project structure
 
 stellar contract invoke --id <CONTRACT_ID> \
   --source deployer --network mainnet \
@@ -193,4 +195,4 @@ contracts/
 artifacts/      local deployment output (gitignored — contains only public addresses, kept local to avoid churn on every redeploy).
                 NOT authoritative: it is nev
 
-/* … truncated 715 chars — edit only what you need near the top … */
+/* … truncated 863 chars — edit only what you need near the top … */
